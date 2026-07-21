@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=NES Game Library
+Comment=Full-screen NES game launcher
+Exec=/home/quanlv/.local/bin/nes-game-library
+Icon=applications-games
+Terminal=false
+Categories=Game;Emulator;
+StartupNotify=true

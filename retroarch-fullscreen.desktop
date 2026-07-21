@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=RetroArch Fullscreen
+Comment=Open RetroArch directly in fullscreen mode
+Exec=/home/quanlv/.local/bin/retroarch-fullscreen
+Icon=retroarch
+Terminal=false
+Categories=Game;Emulator;
+StartupNotify=true

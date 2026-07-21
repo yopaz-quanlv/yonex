@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+
+# Local configuration snapshots
+*.conf.updated
+*.cfg.updated
+
+# Unrelated local utilities
+README-youtube-drive.md
+youtube_drive_link.py
+test_youtube_drive_link.py
