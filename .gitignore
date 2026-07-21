@@ -9,3 +9,6 @@ __pycache__/
 README-youtube-drive.md
 youtube_drive_link.py
 test_youtube_drive_link.py
+
+# Local ROM library and artwork (not redistributed)
+games/

@@ -1,7 +1,7 @@
 # Yonex NES Game Library
 
 A fullscreen GTK 4 NES library for Ubuntu. It discovers `.nes` games inside
-`~/Downloads/Page N`, displays cached Libretro artwork and metadata, and launches
+`./games/Page N`, displays cached Libretro artwork and metadata, and launches
 games through RetroArch with the Nestopia libretro core.
 
 ## Features

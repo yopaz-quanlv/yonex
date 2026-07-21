@@ -17,7 +17,7 @@ from gi.repository import Gdk, GLib, Gtk
 
 ROM_EXTENSIONS = {".nes"}
 PAGE_DIRECTORY = re.compile(r"^Page\s+(\d+)$", re.IGNORECASE)
-DOWNLOADS = Path.home() / "Downloads"
+GAME_ROOT = Path(os.environ.get("NES_GAME_DIR", Path.home() / "yones" / "games"))
 RETROARCH = "/usr/bin/retroarch"
 LIBRETRO_CORE = "/usr/lib/x86_64-linux-gnu/libretro/nestopia_libretro.so"
 RETROARCH_CONFIG = Path.home() / ".config" / "retroarch" / "retroarch.cfg"
@@ -91,7 +91,7 @@ class GameLauncher(Gtk.Application):
 
         title = Gtk.Label(label="NES GAME LIBRARY", xalign=0)
         title.add_css_class("hero")
-        subtitle = Gtk.Label(label="Games found in ~/Downloads", xalign=0)
+        subtitle = Gtk.Label(label=f"Games found in {GAME_ROOT}", xalign=0)
         subtitle.add_css_class("subtitle")
         outer.append(title)
         outer.append(subtitle)
@@ -337,8 +337,8 @@ class GameLauncher(Gtk.Application):
 
     def refresh(self):
         page_dirs = []
-        if DOWNLOADS.exists():
-            for path in DOWNLOADS.iterdir():
+        if GAME_ROOT.exists():
+            for path in GAME_ROOT.iterdir():
                 if path.is_dir() and (match := PAGE_DIRECTORY.match(path.name)):
                     page_dirs.append((int(match.group(1)), path))
         page_dirs.sort(key=lambda item: item[0])
@@ -351,7 +351,7 @@ class GameLauncher(Gtk.Application):
             self.pages.append((page_number, games))
         if not self.pages:
             games = sorted(
-                (p for p in DOWNLOADS.rglob("*.nes") if p.is_file()),
+                (p for p in GAME_ROOT.rglob("*.nes") if p.is_file()),
                 key=self.game_sort_key,
             )
             self.pages = [(0, games)]
@@ -372,7 +372,7 @@ class GameLauncher(Gtk.Application):
             box.set_margin_end(18)
             name = Gtk.Label(label=self.pretty_name(game), xalign=0)
             name.add_css_class("game-title")
-            path = Gtk.Label(label=str(game.relative_to(DOWNLOADS)), xalign=0)
+            path = Gtk.Label(label=str(game.relative_to(GAME_ROOT)), xalign=0)
             path.add_css_class("game-path")
             box.append(name)
             box.append(path)
