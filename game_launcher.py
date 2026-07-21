@@ -6,6 +6,10 @@ import hashlib
 import threading
 import urllib.parse
 import urllib.request
+import zipfile
+import glob
+import struct
+import time
 from pathlib import Path
 
 import gi
@@ -18,11 +22,18 @@ from gi.repository import Gdk, GLib, Gtk
 ROM_EXTENSIONS = {".nes"}
 PAGE_DIRECTORY = re.compile(r"^Page\s+(\d+)$", re.IGNORECASE)
 GAME_ROOT = Path(os.environ.get("NES_GAME_DIR", Path.home() / "yones" / "games"))
+DOWNLOADS = Path.home() / "Downloads"
 RETROARCH = "/usr/bin/retroarch"
-LIBRETRO_CORE = "/usr/lib/x86_64-linux-gnu/libretro/nestopia_libretro.so"
-RETROARCH_CONFIG = Path.home() / ".config" / "retroarch" / "retroarch.cfg"
+NES_CORE = "/usr/lib/x86_64-linux-gnu/libretro/nestopia_libretro.so"
+GBA_CORE = "/usr/lib/x86_64-linux-gnu/libretro/mgba_libretro.so"
+NDS_CORE = "/usr/lib/x86_64-linux-gnu/libretro/desmume_libretro.so"
+CONTROL_DIR = Path.home() / ".config" / "yones" / "controls"
 ART_CACHE = Path.home() / ".cache" / "nes-game-library"
-THUMBNAIL_ROOT = "https://thumbnails.libretro.com/Nintendo%20-%20Nintendo%20Entertainment%20System"
+THUMBNAIL_ROOTS = {
+    "NES": "https://thumbnails.libretro.com/Nintendo%20-%20Nintendo%20Entertainment%20System",
+    "GBA": "https://thumbnails.libretro.com/Nintendo%20-%20Game%20Boy%20Advance",
+    "NDS": "https://thumbnails.libretro.com/Nintendo%20-%20Nintendo%20DS",
+}
 GAME_METADATA = {
     "contra": ("1988", "Run and gun", "Konami", "1–2 players"),
     "super mario bros. 3": ("1990", "Platform", "Nintendo", "1–2 players"),
@@ -34,15 +45,47 @@ GAME_METADATA = {
 RETROARCH_ACTIONS = {
     "up": "up", "down": "down", "left": "left", "right": "right",
     "select": "select", "start": "start", "a": "a", "b": "b",
-    "turboa": "x", "turbob": "y",
+    "turboa": "x", "turbob": "y", "l": "l", "r": "r",
+    "save_state": "save_state", "load_state": "load_state",
 }
-NES_BUTTONS = (
+HOTKEY_ACTIONS = {"save_state", "load_state"}
+CONTROL_BUTTONS = {
+    "NES": (
     ("up", "D-pad Up"), ("down", "D-pad Down"),
     ("left", "D-pad Left"), ("right", "D-pad Right"),
     ("select", "Select"), ("start", "Start"),
     ("a", "A"), ("b", "B"),
     ("turboa", "Turbo A"), ("turbob", "Turbo B"),
-)
+    ("save_state", "Save State"), ("load_state", "Load State"),
+    ),
+    "GBA": (
+        ("up", "D-pad Up"), ("down", "D-pad Down"),
+        ("left", "D-pad Left"), ("right", "D-pad Right"),
+        ("select", "Select"), ("start", "Start"),
+        ("a", "A"), ("b", "B"), ("l", "L"), ("r", "R"),
+        ("save_state", "Save State"), ("load_state", "Load State"),
+    ),
+    "NDS": (
+        ("up", "D-pad Up"), ("down", "D-pad Down"),
+        ("left", "D-pad Left"), ("right", "D-pad Right"),
+        ("select", "Select"), ("start", "Start"),
+        ("a", "A"), ("b", "B"), ("turboa", "X"), ("turbob", "Y"),
+        ("l", "L"), ("r", "R"),
+        ("save_state", "Save State"), ("load_state", "Load State"),
+    ),
+}
+RECOMMENDED_KEYS = {
+    "NES": {"up": "up", "down": "down", "left": "left", "right": "right",
+            "select": "num1", "start": "num2", "a": "s", "b": "a",
+            "turboa": "x", "turbob": "z", "save_state": "f2", "load_state": "f4"},
+    "GBA": {"up": "up", "down": "down", "left": "left", "right": "right",
+            "select": "num1", "start": "num2", "a": "s", "b": "a",
+            "l": "q", "r": "w", "save_state": "f2", "load_state": "f4"},
+    "NDS": {"up": "up", "down": "down", "left": "left", "right": "right",
+            "select": "num1", "start": "num2", "a": "s", "b": "a",
+            "turboa": "x", "turbob": "z", "l": "q", "r": "w",
+            "save_state": "f2", "load_state": "f4"},
+}
 
 
 class GameLauncher(Gtk.Application):
@@ -55,7 +98,16 @@ class GameLauncher(Gtk.Application):
         self.pages = []
         self.current_page = 0
         self.capture_action = None
+        self.capture_kind = None
+        self.capture_token = 0
         self.mapping_buttons = {}
+        self.gamepad_mapping_buttons = {}
+        self.current_system = "NES"
+        self.current_control_system = "NES"
+        self.home_listbox = None
+        self.settings_listbox = None
+        self.gamepad_monitor_started = False
+        self.game_running = False
 
     def do_activate(self):
         if self.window:
@@ -89,12 +141,12 @@ class GameLauncher(Gtk.Application):
         outer.set_margin_start(70)
         outer.set_margin_end(70)
 
-        title = Gtk.Label(label="NES GAME LIBRARY", xalign=0)
-        title.add_css_class("hero")
-        subtitle = Gtk.Label(label=f"Games found in {GAME_ROOT}", xalign=0)
-        subtitle.add_css_class("subtitle")
-        outer.append(title)
-        outer.append(subtitle)
+        self.library_title = Gtk.Label(label="NES GAME LIBRARY", xalign=0)
+        self.library_title.add_css_class("hero")
+        self.library_subtitle = Gtk.Label(label=f"Games found in {GAME_ROOT}", xalign=0)
+        self.library_subtitle.add_css_class("subtitle")
+        outer.append(self.library_title)
+        outer.append(self.library_subtitle)
 
         scroll = Gtk.ScrolledWindow()
         scroll.set_vexpand(True)
@@ -115,7 +167,7 @@ class GameLauncher(Gtk.Application):
 
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=20)
         hint = Gtk.Label(
-            label="↑ ↓ Select    ← → Page    Enter Play    F5 Refresh    Esc Exit", xalign=0
+            label="↑ ↓ Select    ← → Page    Enter Play    F5 Refresh    Esc Back", xalign=0
         )
         hint.add_css_class("hint")
         hint.set_hexpand(True)
@@ -125,13 +177,15 @@ class GameLauncher(Gtk.Application):
         footer.append(self.status)
         outer.append(footer)
         settings = Gtk.Button(label="Controller Setup  [F1]")
-        settings.connect("clicked", lambda _button: self.show_setup())
+        settings.connect("clicked", lambda _button: self.show_settings_menu())
         footer.append(settings)
 
         self.stack = Gtk.Stack()
         self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         self.stack.set_transition_duration(180)
+        self.stack.add_named(self.build_home_page(), "home")
         self.stack.add_named(outer, "games")
+        self.stack.add_named(self.build_settings_menu(), "settings_menu")
         self.stack.add_named(self.build_setup_page(), "setup")
         self.window.set_child(self.stack)
 
@@ -139,7 +193,208 @@ class GameLauncher(Gtk.Application):
         keys.connect("key-pressed", self.on_key)
         self.window.add_controller(keys)
         self.refresh()
+        self.stack.set_visible_child_name("home")
         self.window.present()
+        self.start_gamepad_monitor()
+
+    def start_gamepad_monitor(self):
+        if self.gamepad_monitor_started:
+            return
+        self.gamepad_monitor_started = True
+        threading.Thread(target=self.monitor_gamepad, daemon=True).start()
+
+    def monitor_gamepad(self):
+        """Hot-plug monitor for common USB/Bluetooth controllers via joydev."""
+        while True:
+            devices = sorted(glob.glob("/dev/input/js*"))
+            if not devices:
+                time.sleep(1)
+                continue
+            try:
+                fd = os.open(devices[0], os.O_RDONLY | os.O_NONBLOCK)
+                axis_active = {}
+                try:
+                    while devices[0] in glob.glob("/dev/input/js*"):
+                        try:
+                            data = os.read(fd, 8)
+                        except BlockingIOError:
+                            time.sleep(0.02)
+                            continue
+                        if len(data) != 8:
+                            break
+                        _stamp, value, event_type, number = struct.unpack("<IhBB", data)
+                        if event_type & 0x80:
+                            continue
+                        event_type &= 0x7F
+                        action = None
+                        if event_type == 1 and value:
+                            action = {0: "accept", 1: "back", 7: "accept"}.get(number)
+                        elif event_type == 2:
+                            direction = 1 if value > 16000 else -1 if value < -16000 else 0
+                            previous = axis_active.get(number, 0)
+                            axis_active[number] = direction
+                            if direction and direction != previous:
+                                if number in (0, 6):
+                                    action = "right" if direction > 0 else "left"
+                                elif number in (1, 7):
+                                    action = "down" if direction > 0 else "up"
+                        if action:
+                            GLib.idle_add(self.handle_gamepad_navigation, action)
+                finally:
+                    os.close(fd)
+            except OSError:
+                pass
+            time.sleep(1)
+
+    def handle_gamepad_navigation(self, action):
+        if self.game_running or self.capture_kind == "gamepad":
+            return False
+        screen = self.stack.get_visible_child_name()
+        listbox = self.home_listbox if screen == "home" else (
+            self.settings_listbox if screen == "settings_menu" else self.listbox
+        )
+        if action in ("up", "down") and screen != "setup":
+            row = listbox.get_selected_row()
+            index = row.get_index() if row else 0
+            index += -1 if action == "up" else 1
+            target = listbox.get_row_at_index(max(0, index))
+            if target:
+                listbox.select_row(target)
+                target.grab_focus()
+            return False
+        if action in ("left", "right") and screen == "games":
+            self.change_page(-1 if action == "left" else 1)
+            return False
+        if action == "accept":
+            if screen == "home":
+                row = self.home_listbox.get_selected_row()
+                if row:
+                    self.activate_home_row(self.home_listbox, row)
+            elif screen == "settings_menu":
+                row = self.settings_listbox.get_selected_row()
+                if row:
+                    self.activate_settings_row(self.settings_listbox, row)
+            elif screen == "games":
+                row = self.listbox.get_selected_row()
+                if row and hasattr(row, "game_path"):
+                    self.launch_game(row.game_path)
+            return False
+        if action == "back":
+            if screen == "games" or screen == "settings_menu":
+                self.show_home()
+            elif screen == "setup":
+                self.show_settings_menu()
+        return False
+
+    def build_home_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
+        page.set_margin_top(90)
+        page.set_margin_bottom(70)
+        page.set_margin_start(180)
+        page.set_margin_end(180)
+        title = Gtk.Label(label="GAME LIBRARY")
+        title.add_css_class("hero")
+        subtitle = Gtk.Label(label="Choose a system")
+        subtitle.add_css_class("subtitle")
+        page.append(title)
+        page.append(subtitle)
+        self.home_listbox = Gtk.ListBox()
+        self.home_listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.home_listbox.set_activate_on_single_click(False)
+        self.home_listbox.connect("row-activated", self.activate_home_row)
+        for system, description in (
+            ("NES", "Nintendo Entertainment System"),
+            ("GBA", "Game Boy Advance"),
+            ("NDS", "Nintendo DS"),
+            ("Settings", "Controller mapping"),
+        ):
+            row = Gtk.ListBoxRow()
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            box.set_margin_top(20)
+            box.set_margin_bottom(20)
+            box.set_margin_start(28)
+            box.set_margin_end(28)
+            name = Gtk.Label(label=system, xalign=0)
+            name.add_css_class("game-title")
+            detail = Gtk.Label(label=description, xalign=0)
+            detail.add_css_class("subtitle")
+            box.append(name)
+            box.append(detail)
+            row.set_child(box)
+            row.menu_action = system
+            self.home_listbox.append(row)
+        self.home_listbox.select_row(self.home_listbox.get_row_at_index(0))
+        self.home_listbox.set_vexpand(True)
+        page.append(self.home_listbox)
+        hint = Gtk.Label(label="↑ ↓ Select    Enter Open    Esc Exit")
+        hint.add_css_class("hint")
+        page.append(hint)
+        return page
+
+    def activate_home_row(self, _listbox, row):
+        action = getattr(row, "menu_action", "")
+        if action == "Settings":
+            self.show_settings_menu()
+        elif action in ("NES", "GBA", "NDS"):
+            self.show_library(action)
+
+    def show_library(self, system):
+        self.current_system = system
+        self.current_page = 0
+        self.library_title.set_text(f"{system} GAME LIBRARY")
+        source = GAME_ROOT if system == "NES" else DOWNLOADS
+        self.library_subtitle.set_text(f"Games found in {source}")
+        self.refresh()
+        self.stack.set_visible_child_name("games")
+
+    def show_home(self):
+        self.capture_action = None
+        self.capture_kind = None
+        self.capture_token += 1
+        self.stack.set_visible_child_name("home")
+        self.home_listbox.grab_focus()
+
+    def build_settings_menu(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
+        page.set_margin_top(90)
+        page.set_margin_bottom(70)
+        page.set_margin_start(180)
+        page.set_margin_end(180)
+        title = Gtk.Label(label="CONTROLLER SETTINGS")
+        title.add_css_class("hero")
+        page.append(title)
+        self.settings_listbox = Gtk.ListBox()
+        self.settings_listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.settings_listbox.set_activate_on_single_click(False)
+        self.settings_listbox.connect("row-activated", self.activate_settings_row)
+        for system in ("NES", "GBA", "NDS"):
+            row = Gtk.ListBoxRow()
+            label = Gtk.Label(label=f"{system} Controls", xalign=0)
+            label.add_css_class("game-title")
+            label.set_margin_top(26)
+            label.set_margin_bottom(26)
+            label.set_margin_start(28)
+            label.set_margin_end(28)
+            row.set_child(label)
+            row.control_system = system
+            self.settings_listbox.append(row)
+        self.settings_listbox.select_row(self.settings_listbox.get_row_at_index(0))
+        self.settings_listbox.set_vexpand(True)
+        page.append(self.settings_listbox)
+        hint = Gtk.Label(label="↑ ↓ Select    Enter Open    Esc Back")
+        hint.add_css_class("hint")
+        page.append(hint)
+        return page
+
+    def show_settings_menu(self):
+        self.capture_action = None
+        self.capture_kind = None
+        self.capture_token += 1
+        self.stack.set_visible_child_name("settings_menu")
+        self.settings_listbox.grab_focus()
+
+    def activate_settings_row(self, _listbox, row):
+        self.show_setup(getattr(row, "control_system", "NES"))
 
     def build_details_panel(self):
         panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -171,34 +426,26 @@ class GameLauncher(Gtk.Application):
         page.set_margin_start(100)
         page.set_margin_end(100)
 
-        title = Gtk.Label(label="CONTROLLER SETUP", xalign=0)
-        title.add_css_class("hero")
+        self.setup_title = Gtk.Label(label="NES CONTROLS", xalign=0)
+        self.setup_title.add_css_class("hero")
         subtitle = Gtk.Label(
-            label="Choose an NES button, then press the keyboard key you want to use.", xalign=0
+            label="Choose a controller button, then press the keyboard key you want to use.", xalign=0
         )
         subtitle.add_css_class("subtitle")
-        page.append(title)
+        page.append(self.setup_title)
         page.append(subtitle)
 
-        grid = Gtk.Grid(column_spacing=18, row_spacing=12)
-        grid.set_vexpand(True)
-        grid.set_valign(Gtk.Align.CENTER)
-        for index, (action, label) in enumerate(NES_BUTTONS):
-            name = Gtk.Label(label=label, xalign=0)
-            name.add_css_class("game-title")
-            button = Gtk.Button()
-            button.set_size_request(240, 54)
-            button.connect("clicked", self.begin_capture, action)
-            self.mapping_buttons[action] = button
-            column = (index % 2) * 2
-            row = index // 2
-            grid.attach(name, column, row, 1, 1)
-            grid.attach(button, column + 1, row, 1, 1)
-        page.append(grid)
+        self.setup_grid = Gtk.Grid(column_spacing=18, row_spacing=12)
+        self.setup_grid.set_valign(Gtk.Align.CENTER)
+        setup_scroll = Gtk.ScrolledWindow()
+        setup_scroll.set_vexpand(True)
+        setup_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        setup_scroll.set_child(self.setup_grid)
+        page.append(setup_scroll)
 
         controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        back = Gtk.Button(label="Back to Games  [Esc]")
-        back.connect("clicked", lambda _button: self.show_games())
+        back = Gtk.Button(label="Back to Settings  [Esc]")
+        back.connect("clicked", lambda _button: self.show_settings_menu())
         reset = Gtk.Button(label="Use Recommended Keys")
         reset.connect("clicked", self.set_recommended_keys)
         controls.append(back)
@@ -206,42 +453,181 @@ class GameLauncher(Gtk.Application):
         page.append(controls)
         return page
 
-    def show_setup(self):
+    def show_setup(self, system="NES"):
+        self.current_control_system = system
         self.capture_action = None
+        self.capture_kind = None
+        self.capture_token += 1
+        self.setup_title.set_text(f"{system} CONTROLS")
+        self.populate_mapping_buttons()
         self.refresh_mapping_labels()
         self.stack.set_visible_child_name("setup")
 
-    def show_games(self):
-        self.capture_action = None
-        self.stack.set_visible_child_name("games")
+    def populate_mapping_buttons(self):
+        while child := self.setup_grid.get_first_child():
+            self.setup_grid.remove(child)
+        self.mapping_buttons = {}
+        self.gamepad_mapping_buttons = {}
+        keyboard_header = Gtk.Label(label="Keyboard")
+        keyboard_header.add_css_class("subtitle")
+        gamepad_header = Gtk.Label(label="Gamepad")
+        gamepad_header.add_css_class("subtitle")
+        self.setup_grid.attach(keyboard_header, 1, 0, 1, 1)
+        self.setup_grid.attach(gamepad_header, 2, 0, 1, 1)
+        for index, (action, label) in enumerate(CONTROL_BUTTONS[self.current_control_system]):
+            name = Gtk.Label(label=label, xalign=0)
+            name.add_css_class("game-title")
+            keyboard_button = Gtk.Button()
+            keyboard_button.set_size_request(190, 42)
+            keyboard_button.connect("clicked", self.begin_capture, action, "keyboard")
+            gamepad_button = Gtk.Button()
+            gamepad_button.set_size_request(190, 42)
+            gamepad_button.connect("clicked", self.begin_capture, action, "gamepad")
+            self.mapping_buttons[action] = keyboard_button
+            self.gamepad_mapping_buttons[action] = gamepad_button
+            row = index + 1
+            self.setup_grid.attach(name, 0, row, 1, 1)
+            self.setup_grid.attach(keyboard_button, 1, row, 1, 1)
+            self.setup_grid.attach(gamepad_button, 2, row, 1, 1)
 
     def read_mapping(self):
-        text = RETROARCH_CONFIG.read_text(encoding="utf-8") if RETROARCH_CONFIG.exists() else ""
-        mapping = {}
-        for action, retro_action in RETROARCH_ACTIONS.items():
+        path = self.control_config_path(self.current_control_system)
+        if not path.exists():
+            return dict(RECOMMENDED_KEYS[self.current_control_system])
+        text = path.read_text(encoding="utf-8")
+        mapping = dict(RECOMMENDED_KEYS[self.current_control_system])
+        for action, _label in CONTROL_BUTTONS[self.current_control_system]:
+            config_key = self.retroarch_config_key(action)
             match = re.search(
-                rf'^input_player1_{retro_action}\s*=\s*"([^"]*)"', text, re.MULTILINE
+                rf'^{config_key}\s*=\s*"([^"]*)"', text, re.MULTILINE
             )
-            mapping[action] = match.group(1) if match else ""
+            if match:
+                mapping[action] = match.group(1)
         return mapping
+
+    def read_gamepad_mapping(self):
+        path = self.control_config_path(self.current_control_system)
+        if not path.exists():
+            return {}
+        text = path.read_text(encoding="utf-8")
+        mapping = {}
+        for action, _label in CONTROL_BUTTONS[self.current_control_system]:
+            config_key = self.retroarch_config_key(action)
+            button = re.search(
+                rf'^{config_key}_btn\s*=\s*"(\d+)"', text, re.MULTILINE
+            )
+            axis = re.search(
+                rf'^{config_key}_axis\s*=\s*"([+-]\d+)"', text, re.MULTILINE
+            )
+            if button:
+                mapping[action] = ("btn", button.group(1))
+            elif axis:
+                mapping[action] = ("axis", axis.group(1))
+        return mapping
+
+    @staticmethod
+    def control_config_path(system):
+        return CONTROL_DIR / f"{system.casefold()}.cfg"
+
+    @staticmethod
+    def retroarch_config_key(action):
+        prefix = "input_" if action in HOTKEY_ACTIONS else "input_player1_"
+        return f"{prefix}{RETROARCH_ACTIONS[action]}"
 
     def refresh_mapping_labels(self):
         mapping = self.read_mapping()
-        for action, _label in NES_BUTTONS:
+        gamepad_mapping = self.read_gamepad_mapping()
+        for action, _label in CONTROL_BUTTONS[self.current_control_system]:
             raw = mapping.get(action, "")
             keyval = Gdk.keyval_from_name(self.retro_to_gdk_name(raw)) if raw else 0
             key_name = Gdk.keyval_name(keyval) if keyval else None
             self.mapping_buttons[action].set_label(key_name or "Not set")
+            binding = gamepad_mapping.get(action)
+            self.gamepad_mapping_buttons[action].set_label(
+                self.gamepad_binding_label(binding) if binding else "Not set"
+            )
 
-    def begin_capture(self, button, action):
+    def begin_capture(self, button, action, kind):
         if self.capture_action and self.capture_action in self.mapping_buttons:
             self.refresh_mapping_labels()
         self.capture_action = action
-        button.set_label("Press a key…")
-        self.window.grab_focus()
+        self.capture_kind = kind
+        self.capture_token += 1
+        if kind == "keyboard":
+            button.set_label("Press a key…")
+            self.window.grab_focus()
+        else:
+            devices = sorted(glob.glob("/dev/input/js*"))
+            if not devices:
+                self.capture_action = None
+                self.capture_kind = None
+                button.set_label("Connect gamepad")
+                return
+            button.set_label("Press a button…")
+            token = self.capture_token
+            threading.Thread(
+                target=self.capture_gamepad_event,
+                args=(devices[0], action, token),
+                daemon=True,
+            ).start()
 
     def save_key(self, action, keyval):
         self.write_retroarch_settings({action: self.gdk_to_retro_name(keyval)})
+
+    def capture_gamepad_event(self, device, action, token):
+        try:
+            with open(device, "rb", buffering=0) as gamepad:
+                while token == self.capture_token:
+                    data = gamepad.read(8)
+                    if len(data) != 8:
+                        break
+                    _time, value, event_type, number = struct.unpack("<IhBB", data)
+                    if event_type & 0x80:
+                        continue
+                    event_type &= 0x7F
+                    if event_type == 1 and value:
+                        GLib.idle_add(
+                            self.complete_gamepad_capture, action, ("btn", str(number)), token
+                        )
+                        return
+                    if event_type == 2 and abs(value) > 16000:
+                        direction = "+" if value > 0 else "-"
+                        GLib.idle_add(
+                            self.complete_gamepad_capture,
+                            action,
+                            ("axis", f"{direction}{number}"),
+                            token,
+                        )
+                        return
+        except OSError:
+            GLib.idle_add(self.cancel_gamepad_capture, token)
+
+    def complete_gamepad_capture(self, action, binding, token):
+        if token != self.capture_token:
+            return False
+        keyboard = self.read_mapping()
+        gamepad = self.read_gamepad_mapping()
+        gamepad[action] = binding
+        self.write_control_config(keyboard, gamepad)
+        self.capture_action = None
+        self.capture_kind = None
+        self.refresh_mapping_labels()
+        return False
+
+    def cancel_gamepad_capture(self, token):
+        if token == self.capture_token:
+            self.capture_action = None
+            self.capture_kind = None
+            self.refresh_mapping_labels()
+        return False
+
+    @staticmethod
+    def gamepad_binding_label(binding):
+        kind, value = binding
+        if kind == "btn":
+            return f"Button {value}"
+        direction = "+" if value.startswith("+") else "−"
+        return f"Axis {value[1:]} {direction}"
 
     @staticmethod
     def gdk_to_retro_name(keyval):
@@ -259,29 +645,51 @@ class GameLauncher(Gtk.Application):
         return aliases.get(name, name)
 
     def write_retroarch_settings(self, settings):
-        RETROARCH_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-        text = RETROARCH_CONFIG.read_text(encoding="utf-8") if RETROARCH_CONFIG.exists() else ""
-        for action, value in settings.items():
-            retro_action = RETROARCH_ACTIONS[action]
-            pattern = rf'^input_player1_{retro_action}\s*=.*$'
-            replacement = f'input_player1_{retro_action} = "{value}"'
-            if re.search(pattern, text, re.MULTILINE):
-                text = re.sub(pattern, replacement, text, count=1, flags=re.MULTILINE)
-            else:
-                text += f"\n{replacement}\n"
-        RETROARCH_CONFIG.write_text(text, encoding="utf-8")
+        mapping = self.read_mapping()
+        mapping.update(settings)
+        self.write_control_config(mapping, self.read_gamepad_mapping())
+
+    def write_control_config(self, mapping, gamepad_mapping):
+        CONTROL_DIR.mkdir(parents=True, exist_ok=True)
+        lines = []
+        for action, _label in CONTROL_BUTTONS[self.current_control_system]:
+            config_key = self.retroarch_config_key(action)
+            lines.append(f'{config_key} = "{mapping[action]}"')
+            binding = gamepad_mapping.get(action)
+            if binding:
+                kind, value = binding
+                lines.append(f'{config_key}_{kind} = "{value}"')
+        lines.append('input_player1_joypad_index = "0"')
+        self.control_config_path(self.current_control_system).write_text(
+            "\n".join(lines) + "\n", encoding="utf-8"
+        )
+
+    @staticmethod
+    def ensure_control_config(system):
+        path = GameLauncher.control_config_path(system)
+        if not path.exists():
+            CONTROL_DIR.mkdir(parents=True, exist_ok=True)
+            lines = []
+            for action, _label in CONTROL_BUTTONS[system]:
+                config_key = GameLauncher.retroarch_config_key(action)
+                lines.append(f'{config_key} = "{RECOMMENDED_KEYS[system][action]}"')
+            lines.append('input_player1_joypad_index = "0"')
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        else:
+            text = path.read_text(encoding="utf-8")
+            additions = []
+            for action in HOTKEY_ACTIONS:
+                config_key = GameLauncher.retroarch_config_key(action)
+                if not re.search(rf'^{config_key}\s*=', text, re.MULTILINE):
+                    additions.append(f'{config_key} = "{RECOMMENDED_KEYS[system][action]}"')
+            if not re.search(r'^input_player1_joypad_index\s*=', text, re.MULTILINE):
+                additions.append('input_player1_joypad_index = "0"')
+            if additions:
+                path.write_text(text.rstrip() + "\n" + "\n".join(additions) + "\n", encoding="utf-8")
+        return path
 
     def set_recommended_keys(self, _button):
-        recommended = {
-            "up": Gdk.KEY_Up, "down": Gdk.KEY_Down,
-            "left": Gdk.KEY_Left, "right": Gdk.KEY_Right,
-            "select": Gdk.KEY_1, "start": Gdk.KEY_2,
-            "a": Gdk.KEY_a, "b": Gdk.KEY_s,
-            "turboa": Gdk.KEY_z, "turbob": Gdk.KEY_x,
-        }
-        self.write_retroarch_settings(
-            {action: self.gdk_to_retro_name(keyval) for action, keyval in recommended.items()}
-        )
+        self.write_retroarch_settings(RECOMMENDED_KEYS[self.current_control_system])
         self.refresh_mapping_labels()
 
     def on_game_selected(self, _listbox, row):
@@ -293,14 +701,16 @@ class GameLauncher(Gtk.Application):
         self.boxart.set_filename(None)
         self.screenshot.set_filename(None)
         year, genre, publisher, players = GAME_METADATA.get(
-            title.casefold(), ("Unknown", "NES game", "Unknown", "Unknown")
+            title.casefold(), ("Unknown", f"{self.current_system} game", "Unknown", "Unknown")
         )
         self.detail_meta.set_text(
             f"Year: {year}\nGenre: {genre}\nPublisher: {publisher}\nPlayers: {players}\n\n{game.name}"
         )
-        threading.Thread(target=self.fetch_artwork, args=(game, title), daemon=True).start()
+        threading.Thread(
+            target=self.fetch_artwork, args=(game, title, self.current_system), daemon=True
+        ).start()
 
-    def fetch_artwork(self, game, title):
+    def fetch_artwork(self, game, title, system):
         ART_CACHE.mkdir(parents=True, exist_ok=True)
         identity = hashlib.sha1(str(game).encode()).hexdigest()[:12]
         results = {}
@@ -309,7 +719,7 @@ class GameLauncher(Gtk.Application):
             if not target.exists():
                 for candidate in (f"{title} (USA)", f"{title} (USA, Europe)", title):
                     filename = urllib.parse.quote(f"{candidate}.png", safe="()',")
-                    url = f"{THUMBNAIL_ROOT}/{folder}/{filename}"
+                    url = f"{THUMBNAIL_ROOTS[system]}/{folder}/{filename}"
                     try:
                         request = urllib.request.Request(
                             url, headers={"User-Agent": "NES-Game-Library/1.0"}
@@ -336,6 +746,19 @@ class GameLauncher(Gtk.Application):
         return False
 
     def refresh(self):
+        if self.current_system in ("GBA", "NDS"):
+            extension = ".gba" if self.current_system == "GBA" else ".nds"
+            direct_games = [p for p in DOWNLOADS.rglob(f"*{extension}") if p.is_file()]
+            archives = [
+                p for p in DOWNLOADS.rglob("*.zip")
+                if self.is_archive_with_extension(p, extension)
+            ]
+            games = sorted(direct_games + archives, key=lambda path: path.stem.casefold())
+            self.pages = [(0, games)]
+            self.games = games
+            self.current_page = 0
+            self.render_page()
+            return
         page_dirs = []
         if GAME_ROOT.exists():
             for path in GAME_ROOT.iterdir():
@@ -372,7 +795,8 @@ class GameLauncher(Gtk.Application):
             box.set_margin_end(18)
             name = Gtk.Label(label=self.pretty_name(game), xalign=0)
             name.add_css_class("game-title")
-            path = Gtk.Label(label=str(game.relative_to(GAME_ROOT)), xalign=0)
+            root = GAME_ROOT if self.current_system == "NES" else DOWNLOADS
+            path = Gtk.Label(label=str(game.relative_to(root)), xalign=0)
             path.add_css_class("game-path")
             box.append(name)
             box.append(path)
@@ -381,23 +805,34 @@ class GameLauncher(Gtk.Application):
             self.listbox.append(row)
         if page_games:
             self.listbox.select_row(self.listbox.get_row_at_index(0))
-            self.status.set_text(
-                f"Page {page_number}  •  {len(page_games)} game(s)  •  {len(self.games)} total"
-            )
+            if self.current_system == "NES":
+                self.status.set_text(
+                    f"Page {page_number}  •  {len(page_games)} game(s)  •  {len(self.games)} total"
+                )
+            else:
+                self.status.set_text(f"{len(page_games)} {self.current_system} game(s)  •  A–Z")
         else:
-            empty = Gtk.Label(label="No NES games found in Downloads", xalign=0)
+            empty = Gtk.Label(label=f"No {self.current_system} games found", xalign=0)
             empty.add_css_class("game-title")
             empty.set_margin_top(30)
             self.listbox.append(empty)
             self.status.set_text("0 games")
 
     def change_page(self, offset):
-        if not self.pages:
+        if self.current_system != "NES" or not self.pages:
             return
         new_page = max(0, min(self.current_page + offset, len(self.pages) - 1))
         if new_page != self.current_page:
             self.current_page = new_page
             self.render_page()
+
+    @staticmethod
+    def is_archive_with_extension(path, extension):
+        try:
+            with zipfile.ZipFile(path) as archive:
+                return any(name.casefold().endswith(extension) for name in archive.namelist())
+        except (OSError, zipfile.BadZipFile):
+            return False
 
     @staticmethod
     def game_sort_key(path):
@@ -416,9 +851,12 @@ class GameLauncher(Gtk.Application):
             return
         self.status.set_text(f"Launching {self.pretty_name(game)}…")
         try:
+            core = {"NES": NES_CORE, "GBA": GBA_CORE, "NDS": NDS_CORE}[self.current_system]
+            controls = self.ensure_control_config(self.current_system)
             process = subprocess.Popen(
-                [RETROARCH, "--fullscreen", "-L", LIBRETRO_CORE, str(game)]
+                [RETROARCH, "--fullscreen", f"--appendconfig={controls}", "-L", core, str(game)]
             )
+            self.game_running = True
         except OSError as error:
             self.window.present()
             self.status.set_text(f"Could not start RetroArch: {error}")
@@ -427,36 +865,68 @@ class GameLauncher(Gtk.Application):
         self._watch = threading_source
 
     def game_finished(self, _pid, _status):
+        self.game_running = False
         page_number, page_games = self.pages[self.current_page]
-        self.status.set_text(
-            f"Page {page_number}  •  {len(page_games)} game(s)  •  {len(self.games)} total"
-        )
+        if self.current_system == "NES":
+            self.status.set_text(
+                f"Page {page_number}  •  {len(page_games)} game(s)  •  {len(self.games)} total"
+            )
+        else:
+            self.status.set_text(f"{len(page_games)} {self.current_system} game(s)  •  A–Z")
         self.window.present()
 
     def on_key(self, _controller, keyval, _keycode, _state):
         if (_state & Gdk.ModifierType.CONTROL_MASK) and keyval in (Gdk.KEY_c, Gdk.KEY_C):
             self.quit()
             return True
-        if self.capture_action:
+        if self.capture_action and self.capture_kind == "keyboard":
             if keyval == Gdk.KEY_Escape:
                 self.capture_action = None
+                self.capture_kind = None
                 self.refresh_mapping_labels()
                 return True
             action = self.capture_action
             self.capture_action = None
+            self.capture_kind = None
             self.save_key(action, keyval)
+            self.refresh_mapping_labels()
+            return True
+        if self.capture_action and self.capture_kind == "gamepad" and keyval == Gdk.KEY_Escape:
+            self.capture_token += 1
+            self.capture_action = None
+            self.capture_kind = None
             self.refresh_mapping_labels()
             return True
         if self.stack.get_visible_child_name() == "setup":
             if keyval == Gdk.KEY_Escape:
-                self.show_games()
+                self.show_settings_menu()
+                return True
+            return False
+        if self.stack.get_visible_child_name() == "settings_menu":
+            if keyval == Gdk.KEY_Escape:
+                self.show_home()
+                return True
+            if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                row = self.settings_listbox.get_selected_row()
+                if row:
+                    self.activate_settings_row(self.settings_listbox, row)
+                return True
+            return False
+        if self.stack.get_visible_child_name() == "home":
+            if keyval == Gdk.KEY_Escape:
+                self.quit()
+                return True
+            if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                row = self.home_listbox.get_selected_row()
+                if row:
+                    self.activate_home_row(self.home_listbox, row)
                 return True
             return False
         if keyval == Gdk.KEY_Escape:
-            self.quit()
+            self.show_home()
             return True
         if keyval == Gdk.KEY_F1:
-            self.show_setup()
+            self.show_settings_menu()
             return True
         if keyval == Gdk.KEY_F5:
             self.refresh()
