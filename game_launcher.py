@@ -276,8 +276,8 @@ class GameLauncher(Gtk.Application):
             "up": Gdk.KEY_Up, "down": Gdk.KEY_Down,
             "left": Gdk.KEY_Left, "right": Gdk.KEY_Right,
             "select": Gdk.KEY_1, "start": Gdk.KEY_2,
-            "a": Gdk.KEY_s, "b": Gdk.KEY_a,
-            "turboa": Gdk.KEY_x, "turbob": Gdk.KEY_z,
+            "a": Gdk.KEY_a, "b": Gdk.KEY_s,
+            "turboa": Gdk.KEY_z, "turbob": Gdk.KEY_x,
         }
         self.write_retroarch_settings(
             {action: self.gdk_to_retro_name(keyval) for action, keyval in recommended.items()}
