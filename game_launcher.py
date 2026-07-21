@@ -3,12 +3,28 @@ import os
 import subprocess
 import re
 import hashlib
+import platform
 import threading
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
-import gi
+from launcher_platform import (
+    emulator_command,
+    fceux_environment,
+    fceux_executable,
+    game_root,
+    platform_help,
+    retroarch_config,
+)
+
+try:
+    import gi
+except ImportError as error:
+    raise SystemExit(
+        "GTK 4 Python bindings are required.\n"
+        "On macOS with Homebrew, run: brew install gtk4 pygobject3"
+    ) from error
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
@@ -17,11 +33,14 @@ from gi.repository import Gdk, GLib, Gtk
 
 ROM_EXTENSIONS = {".nes"}
 PAGE_DIRECTORY = re.compile(r"^Page\s+(\d+)$", re.IGNORECASE)
-GAME_ROOT = Path(os.environ.get("NES_GAME_DIR", Path.home() / "yones" / "games"))
-RETROARCH = "/usr/bin/retroarch"
-LIBRETRO_CORE = "/usr/lib/x86_64-linux-gnu/libretro/nestopia_libretro.so"
-RETROARCH_CONFIG = Path.home() / ".config" / "retroarch" / "retroarch.cfg"
-ART_CACHE = Path.home() / ".cache" / "nes-game-library"
+APP_DIR = Path(__file__).resolve().parent
+GAME_ROOT = game_root(APP_DIR)
+RETROARCH_CONFIG = retroarch_config()
+ART_CACHE = (
+    Path.home() / "Library" / "Caches" / "nes-game-library"
+    if platform.system() == "Darwin"
+    else Path.home() / ".cache" / "nes-game-library"
+)
 THUMBNAIL_ROOT = "https://thumbnails.libretro.com/Nintendo%20-%20Nintendo%20Entertainment%20System"
 GAME_METADATA = {
     "contra": ("1988", "Run and gun", "Konami", "1–2 players"),
@@ -114,9 +133,10 @@ class GameLauncher(Gtk.Application):
         outer.append(library)
 
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=20)
-        hint = Gtk.Label(
-            label="↑ ↓ Select    ← → Page    Enter Play    F5 Refresh    Esc Exit", xalign=0
-        )
+        hint_text = "↑ ↓ Select    ← → Page    Enter Play    F5 Refresh    Esc Exit"
+        if platform.system() == "Darwin":
+            hint_text += "    •    Game: Arrows Move  Q Select  W Start  A=A  S=B  Z/X Turbo A/B"
+        hint = Gtk.Label(label=hint_text, xalign=0)
         hint.add_css_class("hint")
         hint.set_hexpand(True)
         self.status = Gtk.Label(xalign=1)
@@ -124,8 +144,12 @@ class GameLauncher(Gtk.Application):
         footer.append(hint)
         footer.append(self.status)
         outer.append(footer)
-        settings = Gtk.Button(label="Controller Setup  [F1]")
-        settings.connect("clicked", lambda _button: self.show_setup())
+        if platform.system() == "Darwin":
+            settings = Gtk.Button(label="Open FCEUX Settings  [F1]")
+            settings.connect("clicked", lambda _button: self.open_fceux_settings())
+        else:
+            settings = Gtk.Button(label="Controller Setup  [F1]")
+            settings.connect("clicked", lambda _button: self.show_setup())
         footer.append(settings)
 
         self.stack = Gtk.Stack()
@@ -215,6 +239,17 @@ class GameLauncher(Gtk.Application):
         self.capture_action = None
         self.stack.set_visible_child_name("games")
 
+    def open_fceux_settings(self):
+        executable = fceux_executable()
+        if not executable:
+            self.status.set_text(platform_help())
+            return
+        try:
+            subprocess.Popen([str(executable)], env=fceux_environment())
+            self.status.set_text("FCEUX opened — configure input from its Config menu")
+        except OSError as error:
+            self.status.set_text(f"Could not start FCEUX: {error}")
+
     def read_mapping(self):
         text = RETROARCH_CONFIG.read_text(encoding="utf-8") if RETROARCH_CONFIG.exists() else ""
         mapping = {}
@@ -276,8 +311,8 @@ class GameLauncher(Gtk.Application):
             "up": Gdk.KEY_Up, "down": Gdk.KEY_Down,
             "left": Gdk.KEY_Left, "right": Gdk.KEY_Right,
             "select": Gdk.KEY_1, "start": Gdk.KEY_2,
-            "a": Gdk.KEY_s, "b": Gdk.KEY_a,
-            "turboa": Gdk.KEY_x, "turbob": Gdk.KEY_z,
+            "a": Gdk.KEY_a, "b": Gdk.KEY_s,
+            "turboa": Gdk.KEY_z, "turbob": Gdk.KEY_x,
         }
         self.write_retroarch_settings(
             {action: self.gdk_to_retro_name(keyval) for action, keyval in recommended.items()}
@@ -414,10 +449,15 @@ class GameLauncher(Gtk.Application):
         game = getattr(row, "game_path", None)
         if not game:
             return
+        command = emulator_command(game)
+        if not command:
+            self.status.set_text(platform_help())
+            return
         self.status.set_text(f"Launching {self.pretty_name(game)}…")
         try:
             process = subprocess.Popen(
-                [RETROARCH, "--fullscreen", "-L", LIBRETRO_CORE, str(game)]
+                command,
+                env=fceux_environment() if platform.system() == "Darwin" else None,
             )
         except OSError as error:
             self.window.present()
@@ -456,7 +496,10 @@ class GameLauncher(Gtk.Application):
             self.quit()
             return True
         if keyval == Gdk.KEY_F1:
-            self.show_setup()
+            if platform.system() == "Darwin":
+                self.open_fceux_settings()
+            else:
+                self.show_setup()
             return True
         if keyval == Gdk.KEY_F5:
             self.refresh()

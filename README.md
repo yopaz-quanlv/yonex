@@ -1,8 +1,8 @@
 # Yonex NES Game Library
 
-A fullscreen GTK 4 NES library for Ubuntu. It discovers `.nes` games inside
-`./games/Page N`, displays cached Libretro artwork and metadata, and launches
-games through RetroArch with the Nestopia libretro core.
+A fullscreen GTK 4 NES library for macOS and Linux. It discovers `.nes` games
+inside `./games/Page N`, displays cached Libretro artwork and metadata, and
+launches games through FCEUX on macOS or RetroArch on Linux.
 
 ## Features
 
@@ -12,7 +12,44 @@ games through RetroArch with the Nestopia libretro core.
 - Built-in keyboard mapping screen
 - Fullscreen RetroArch launching
 
-## Requirements
+## macOS
+
+1. Install [Homebrew](https://brew.sh), then install the GTK runtime:
+
+   ```bash
+   brew install gtk4 pygobject3
+   ```
+
+2. Install FCEUX:
+
+   ```bash
+   brew install fceux
+   ```
+
+3. Double-click `run-macos.command` in Finder, or run it from Terminal:
+
+   ```bash
+   ./run-macos.command
+   ```
+
+The launcher supports both Intel and Apple Silicon Macs and finds FCEUX from
+Homebrew automatically. Press F1 in the launcher to open FCEUX and configure
+the keyboard or game controller from its Config menu.
+
+The included macOS keyboard profile uses:
+
+- Arrow keys: D-pad
+- Q: Select; W: Start
+- A: NES A; S: NES B
+- Z: Turbo A; X: Turbo B
+
+Reinstall the recommended profile at any time with:
+
+```bash
+python3 configure_fceux_macos.py
+```
+
+## Linux requirements
 
 - Python 3 with GTK 4 GObject bindings
 - RetroArch
@@ -23,3 +60,14 @@ Run the launcher with:
 ```bash
 python3 game_launcher.py
 ```
+
+## Custom paths
+
+The bundled `games` directory is used by default. These optional environment
+variables can override detected paths:
+
+- `NES_GAME_DIR`
+- `NES_FCEUX`
+- `NES_RETROARCH`
+- `NES_LIBRETRO_CORE`
+- `NES_RETROARCH_CONFIG`
