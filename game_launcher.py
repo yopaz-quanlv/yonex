@@ -31,16 +31,13 @@ except ImportError as error:
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
+from gi.repository import Gdk, GLib, Gtk
 
 
 ROM_EXTENSIONS = {".nes"}
 PAGE_DIRECTORY = re.compile(r"^Page\s+(\d+)$", re.IGNORECASE)
 APP_DIR = Path(__file__).resolve().parent
 GAME_ROOT = game_root(APP_DIR)
-SPLASH_IMAGE = APP_DIR / "assets" / "logo_slogan_2.png"
-SPLASH_DURATION_MS = 2000
 DOWNLOADS = Path.home() / "Downloads"
 RETROARCH = "/usr/bin/retroarch"
 NES_CORE = "/usr/lib/x86_64-linux-gnu/libretro/nestopia_libretro.so"
@@ -223,7 +220,6 @@ class GameLauncher(Gtk.Application):
         self.stack = Gtk.Stack()
         self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         self.stack.set_transition_duration(180)
-        self.stack.add_named(self.build_splash_page(), "splash")
         self.stack.add_named(self.build_home_page(), "home")
         self.stack.add_named(outer, "games")
         self.stack.add_named(self.build_settings_menu(), "settings_menu")
@@ -234,41 +230,10 @@ class GameLauncher(Gtk.Application):
         keys.connect("key-pressed", self.on_key)
         self.window.add_controller(keys)
         self.refresh()
-        self.stack.set_visible_child_name("splash")
+        self.stack.set_visible_child_name("home")
         self.window.present()
         self.start_gamepad_monitor()
-        GLib.timeout_add(SPLASH_DURATION_MS, self.finish_splash)
-
-    def build_splash_page(self):
-        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        page.set_halign(Gtk.Align.FILL)
-        page.set_valign(Gtk.Align.FILL)
-        page.set_hexpand(True)
-        page.set_vexpand(True)
-
-        monitors = Gdk.Display.get_default().get_monitors()
-        monitor = monitors.get_item(0) if monitors.get_n_items() else None
-        screen_width = monitor.get_geometry().width if monitor else 1440
-        logo_width = max(480, round(screen_width * 0.5))
-        logo_height = round(logo_width * 512 / 1788)
-        pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
-            str(SPLASH_IMAGE), logo_width, logo_height, True
-        )
-        logo = Gtk.Picture.new_for_pixbuf(pixbuf)
-        logo.set_content_fit(Gtk.ContentFit.CONTAIN)
-        logo.set_can_shrink(True)
-        logo.set_size_request(logo_width, logo_height)
-        logo.set_halign(Gtk.Align.CENTER)
-        logo.set_valign(Gtk.Align.CENTER)
-        page.append(logo)
-        return page
-
-    def finish_splash(self):
-        if self.stack.get_visible_child_name() == "splash":
-            self.stack.set_visible_child_name("home")
-            self.window.present()
-            GLib.idle_add(self.focus_home)
-        return False
+        GLib.idle_add(self.focus_home)
 
     def focus_home(self):
         self.home_listbox.grab_focus()
@@ -1001,8 +966,6 @@ class GameLauncher(Gtk.Application):
         self.window.present()
 
     def on_key(self, _controller, keyval, _keycode, _state):
-        if self.stack.get_visible_child_name() == "splash":
-            return True
         if (_state & Gdk.ModifierType.CONTROL_MASK) and keyval in (Gdk.KEY_c, Gdk.KEY_C):
             self.quit()
             return True
