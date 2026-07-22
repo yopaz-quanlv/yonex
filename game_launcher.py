@@ -146,10 +146,15 @@ class GameLauncher(Gtk.Application):
             window { background: #090b12; color: #f7f7fb; }
             label { color: #f7f7fb; }
             button {
-                color: #f7f7fb;
-                background-color: #24283b;
+                color: #111827;
+                background-image: none;
+                background-color: #f3f4f6;
+                border: 1px solid #9ca3af;
             }
-            button:hover { background-color: #343a55; }
+            button label { color: #111827; }
+            button:hover { background-color: #ffffff; }
+            button:hover label { color: #111827; }
+            button:active { background-color: #d1d5db; }
             .hero { font-size: 42px; font-weight: 900; color: #ffdf5d; }
             .subtitle { font-size: 16px; color: #9da6ba; }
             list { background: transparent; }
@@ -261,7 +266,12 @@ class GameLauncher(Gtk.Application):
     def finish_splash(self):
         if self.stack.get_visible_child_name() == "splash":
             self.stack.set_visible_child_name("home")
-            self.home_listbox.grab_focus()
+            self.window.present()
+            GLib.idle_add(self.focus_home)
+        return False
+
+    def focus_home(self):
+        self.home_listbox.grab_focus()
         return False
 
     def start_gamepad_monitor(self):
@@ -529,6 +539,14 @@ class GameLauncher(Gtk.Application):
         self.populate_mapping_buttons()
         self.refresh_mapping_labels()
         self.stack.set_visible_child_name("setup")
+        GLib.idle_add(self.focus_mapping_button, "up", "keyboard")
+
+    def focus_mapping_button(self, action, kind="keyboard"):
+        buttons = self.mapping_buttons if kind == "keyboard" else self.gamepad_mapping_buttons
+        button = buttons.get(action)
+        if button:
+            button.grab_focus()
+        return False
 
     def populate_mapping_buttons(self):
         while child := self.setup_grid.get_first_child():
@@ -615,10 +633,18 @@ class GameLauncher(Gtk.Application):
     def refresh_mapping_labels(self):
         mapping = self.read_mapping()
         gamepad_mapping = self.read_gamepad_mapping()
+        direction_names = {
+            "up": "Up",
+            "down": "Down",
+            "left": "Left",
+            "right": "Right",
+        }
         for action, _label in CONTROL_BUTTONS[self.current_control_system]:
             raw = mapping.get(action, "")
             keyval = Gdk.keyval_from_name(self.retro_to_gdk_name(raw)) if raw else 0
-            key_name = Gdk.keyval_name(keyval) if keyval else None
+            key_name = direction_names.get(raw.casefold())
+            if not key_name:
+                key_name = Gdk.keyval_name(keyval) if keyval else None
             self.mapping_buttons[action].set_label(key_name or "Not set")
             binding = gamepad_mapping.get(action)
             self.gamepad_mapping_buttons[action].set_label(
@@ -640,6 +666,7 @@ class GameLauncher(Gtk.Application):
                 self.capture_action = None
                 self.capture_kind = None
                 button.set_label("Connect gamepad")
+                button.grab_focus()
                 return
             button.set_label("Press a button…")
             token = self.capture_token
@@ -690,13 +717,17 @@ class GameLauncher(Gtk.Application):
         self.capture_action = None
         self.capture_kind = None
         self.refresh_mapping_labels()
+        self.focus_mapping_button(action, "gamepad")
         return False
 
     def cancel_gamepad_capture(self, token):
         if token == self.capture_token:
+            action = self.capture_action
             self.capture_action = None
             self.capture_kind = None
             self.refresh_mapping_labels()
+            if action:
+                self.focus_mapping_button(action, "gamepad")
         return False
 
     @staticmethod
@@ -977,21 +1008,26 @@ class GameLauncher(Gtk.Application):
             return True
         if self.capture_action and self.capture_kind == "keyboard":
             if keyval == Gdk.KEY_Escape:
+                action = self.capture_action
                 self.capture_action = None
                 self.capture_kind = None
                 self.refresh_mapping_labels()
+                self.focus_mapping_button(action)
                 return True
             action = self.capture_action
             self.capture_action = None
             self.capture_kind = None
             self.save_key(action, keyval)
             self.refresh_mapping_labels()
+            self.focus_mapping_button(action)
             return True
         if self.capture_action and self.capture_kind == "gamepad" and keyval == Gdk.KEY_Escape:
+            action = self.capture_action
             self.capture_token += 1
             self.capture_action = None
             self.capture_kind = None
             self.refresh_mapping_labels()
+            self.focus_mapping_button(action, "gamepad")
             return True
         if self.stack.get_visible_child_name() == "setup":
             if keyval == Gdk.KEY_Escape:
