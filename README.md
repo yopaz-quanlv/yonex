@@ -1,15 +1,19 @@
 # Yonex NES Game Library
 
-A fullscreen GTK 4 NES library for macOS and Linux. It discovers `.nes` games
-inside `./games/Page N`, displays cached Libretro artwork and metadata, and
-launches games through FCEUX on macOS or RetroArch on Linux.
+A fullscreen GTK 4 retro game library for macOS and Linux. It discovers paged
+NES games inside `./games/Page N` plus GBA and Nintendo DS games in
+`~/Downloads`, displays cached Libretro artwork and metadata, and launches NES
+games through FCEUX on macOS or games through RetroArch on Linux.
 
 ## Features
 
-- Folder-based pages controlled with Left/Right
-- Keyboard game selection with Up/Down and Enter
+- Home menu for NES, GBA, NDS, and controller settings
+- Folder-based NES pages controlled with Left/Right
+- Alphabetical GBA/NDS listings with automatic ROM ZIP detection
+- Keyboard and gamepad navigation (D-pad/analog, A to select, B to go back)
 - Box art and gameplay screenshots from Libretro Thumbnails
-- Built-in keyboard mapping screen
+- Separate NES, GBA, and NDS keyboard/gamepad mapping screens
+- Configurable Save State and Load State controls (F2/F4 by default)
 - Fullscreen RetroArch launching
 
 ## macOS
@@ -53,7 +57,7 @@ python3 configure_fceux_macos.py
 
 - Python 3 with GTK 4 GObject bindings
 - RetroArch
-- Nestopia libretro core
+- Nestopia, mGBA, and DeSmuME libretro cores
 
 Run the launcher with:
 
