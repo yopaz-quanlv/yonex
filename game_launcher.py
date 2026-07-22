@@ -31,7 +31,8 @@ except ImportError as error:
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gdk, GLib, Gtk
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
 
 
 ROM_EXTENSIONS = {".nes"}
@@ -240,14 +241,20 @@ class GameLauncher(Gtk.Application):
         page.set_hexpand(True)
         page.set_vexpand(True)
 
-        logo = Gtk.Picture.new_for_filename(str(SPLASH_IMAGE))
+        monitors = Gdk.Display.get_default().get_monitors()
+        monitor = monitors.get_item(0) if monitors.get_n_items() else None
+        screen_width = monitor.get_geometry().width if monitor else 1440
+        logo_width = max(480, round(screen_width * 0.5))
+        logo_height = round(logo_width * 512 / 1788)
+        pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+            str(SPLASH_IMAGE), logo_width, logo_height, True
+        )
+        logo = Gtk.Picture.new_for_pixbuf(pixbuf)
         logo.set_content_fit(Gtk.ContentFit.CONTAIN)
         logo.set_can_shrink(True)
-        logo.set_size_request(1100, 320)
+        logo.set_size_request(logo_width, logo_height)
         logo.set_halign(Gtk.Align.CENTER)
         logo.set_valign(Gtk.Align.CENTER)
-        logo.set_hexpand(True)
-        logo.set_vexpand(True)
         page.append(logo)
         return page
 
