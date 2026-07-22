@@ -5,7 +5,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 import launcher_platform
-from configure_fceux_macos import PROFILE_NAME, install_profile
+from configure_fceux_macos import (
+    PROFILE_NAMES,
+    RECOMMENDED_PLAYER_KEYS,
+    ensure_profiles,
+    install_profiles,
+    read_player_mapping,
+    save_player_mapping,
+)
 
 
 class LauncherPlatformTests(unittest.TestCase):
@@ -59,24 +66,60 @@ class LauncherPlatformTests(unittest.TestCase):
             environment = launcher_platform.fceux_environment()
             self.assertEqual(environment["LAUNCHER_TEST"], "yes")
 
-    def test_installs_fceux_keyboard_profile_and_backup(self):
+    def test_installs_two_fceux_keyboard_profiles_and_backup(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             config = base / "fceux.cfg"
             config.write_text(
-                "SDL.Input.GamePad.0.Profile = \nSDL.Hotkeys.ToggleMovieRW = Q\n",
+                "SDL.Input.GamePad.0.Profile = \n",
                 encoding="utf-8",
             )
 
-            profile, backup = install_profile(config, base / "input")
+            profiles, backup = install_profiles(config, base / "input")
 
             updated = config.read_text(encoding="utf-8")
-            self.assertIn(f"SDL.Input.GamePad.0.Profile = {PROFILE_NAME}", updated)
-            self.assertIn("SDL.Hotkeys.ToggleMovieRW = \n", updated)
-            mapping = profile.read_text(encoding="utf-8")
-            self.assertIn("a:kA,b:kS,back:kQ,start:kW", mapping)
-            self.assertIn("turboA:kZ,turboB:kX", mapping)
+            self.assertIn("SDL.Input.0 = GamePad.0", updated)
+            self.assertIn("SDL.Input.1 = GamePad.1", updated)
+            self.assertIn(f"SDL.Input.GamePad.0.Profile = {PROFILE_NAMES[1]}", updated)
+            self.assertIn(f"SDL.Input.GamePad.1.Profile = {PROFILE_NAMES[2]}", updated)
+            self.assertIn("SDL.Input.GamePad.1.DeviceType = Keyboard", updated)
+            self.assertEqual(len(profiles), 2)
+            player_one = profiles[0].read_text(encoding="utf-8")
+            player_two = profiles[1].read_text(encoding="utf-8")
+            self.assertIn("back:kE,start:kR", player_one)
+            self.assertIn("dpup:kUp,dpdown:kDown", player_one)
+            self.assertIn("back:kY,start:kU", player_two)
+            self.assertIn("dpup:kT,dpdown:kG,dpleft:kF,dpright:kH", player_two)
+            for mapping in RECOMMENDED_PLAYER_KEYS.values():
+                self.assertTrue(set(mapping.values()).isdisjoint({"1", "2", "3", "4"}))
             self.assertTrue(backup.exists())
+
+    def test_updates_and_reads_player_two_fceux_mapping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            config = base / "fceux.cfg"
+            mapping = dict(RECOMMENDED_PLAYER_KEYS[2])
+            mapping["start"] = "Space"
+
+            save_player_mapping(config, base / "input", 2, mapping)
+
+            self.assertEqual(read_player_mapping(base / "input", 2), mapping)
+            updated = config.read_text(encoding="utf-8")
+            self.assertIn(f"SDL.Input.GamePad.1.Profile = {PROFILE_NAMES[2]}", updated)
+
+    def test_launch_setup_preserves_custom_fceux_mapping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            mapping = dict(RECOMMENDED_PLAYER_KEYS[1])
+            mapping["start"] = "Space"
+            save_player_mapping(base / "fceux.cfg", base / "input", 1, mapping)
+
+            ensure_profiles(base / "fceux.cfg", base / "input")
+
+            self.assertEqual(read_player_mapping(base / "input", 1), mapping)
+            self.assertTrue(
+                (base / "input" / "keyboard" / f"{PROFILE_NAMES[2]}.txt").exists()
+            )
 
 
 if __name__ == "__main__":

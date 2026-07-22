@@ -13,6 +13,12 @@ import struct
 import time
 from pathlib import Path
 
+from configure_fceux_macos import (
+    RECOMMENDED_PLAYER_KEYS,
+    ensure_profiles as ensure_fceux_profiles,
+    read_player_mapping,
+    save_player_mapping,
+)
 from launcher_platform import (
     emulator_command,
     fceux_environment,
@@ -38,6 +44,9 @@ ROM_EXTENSIONS = {".nes"}
 PAGE_DIRECTORY = re.compile(r"^Page\s+(\d+)$", re.IGNORECASE)
 APP_DIR = Path(__file__).resolve().parent
 GAME_ROOT = game_root(APP_DIR)
+FCEUX_BASE = Path.home() / ".fceux"
+FCEUX_CONFIG = FCEUX_BASE / "fceux.cfg"
+FCEUX_INPUT_ROOT = FCEUX_BASE / "input"
 DOWNLOADS = Path.home() / "Downloads"
 RETROARCH = "/usr/bin/retroarch"
 NES_CORE = "/usr/lib/x86_64-linux-gnu/libretro/nestopia_libretro.so"
@@ -124,6 +133,7 @@ class GameLauncher(Gtk.Application):
         self.gamepad_mapping_buttons = {}
         self.current_system = "NES"
         self.current_control_system = "NES"
+        self.current_control_player = 1
         self.home_listbox = None
         self.settings_listbox = None
         self.gamepad_monitor_started = False
@@ -409,9 +419,17 @@ class GameLauncher(Gtk.Application):
         self.settings_listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self.settings_listbox.set_activate_on_single_click(False)
         self.settings_listbox.connect("row-activated", self.activate_settings_row)
-        for system in ("NES", "GBA", "NDS"):
+        settings_entries = []
+        if platform.system() == "Darwin":
+            settings_entries.extend(
+                (("NES Player 1", "NES", 1), ("NES Player 2", "NES", 2))
+            )
+        else:
+            settings_entries.append(("NES Controls", "NES", 1))
+        settings_entries.extend((("GBA Controls", "GBA", 1), ("NDS Controls", "NDS", 1)))
+        for title, system, player in settings_entries:
             row = Gtk.ListBoxRow()
-            label = Gtk.Label(label=f"{system} Controls", xalign=0)
+            label = Gtk.Label(label=title, xalign=0)
             label.add_css_class("game-title")
             label.set_margin_top(26)
             label.set_margin_bottom(26)
@@ -419,6 +437,7 @@ class GameLauncher(Gtk.Application):
             label.set_margin_end(28)
             row.set_child(label)
             row.control_system = system
+            row.control_player = player
             self.settings_listbox.append(row)
         self.settings_listbox.select_row(self.settings_listbox.get_row_at_index(0))
         self.settings_listbox.set_vexpand(True)
@@ -436,7 +455,10 @@ class GameLauncher(Gtk.Application):
         self.settings_listbox.grab_focus()
 
     def activate_settings_row(self, _listbox, row):
-        self.show_setup(getattr(row, "control_system", "NES"))
+        self.show_setup(
+            getattr(row, "control_system", "NES"),
+            getattr(row, "control_player", 1),
+        )
 
     def build_details_panel(self):
         panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -495,12 +517,14 @@ class GameLauncher(Gtk.Application):
         page.append(controls)
         return page
 
-    def show_setup(self, system="NES"):
+    def show_setup(self, system="NES", player=1):
         self.current_control_system = system
+        self.current_control_player = player
         self.capture_action = None
         self.capture_kind = None
         self.capture_token += 1
-        self.setup_title.set_text(f"{system} CONTROLS")
+        title = f"{system} PLAYER {player} CONTROLS" if self.is_fceux_setup() else f"{system} CONTROLS"
+        self.setup_title.set_text(title)
         self.populate_mapping_buttons()
         self.refresh_mapping_labels()
         self.stack.set_visible_child_name("setup")
@@ -513,6 +537,15 @@ class GameLauncher(Gtk.Application):
             button.grab_focus()
         return False
 
+    def is_fceux_setup(self):
+        return platform.system() == "Darwin" and self.current_control_system == "NES"
+
+    def current_control_buttons(self):
+        buttons = CONTROL_BUTTONS[self.current_control_system]
+        if self.is_fceux_setup():
+            return tuple(item for item in buttons if item[0] not in HOTKEY_ACTIONS)
+        return buttons
+
     def populate_mapping_buttons(self):
         while child := self.setup_grid.get_first_child():
             self.setup_grid.remove(child)
@@ -520,25 +553,27 @@ class GameLauncher(Gtk.Application):
         self.gamepad_mapping_buttons = {}
         keyboard_header = Gtk.Label(label="Keyboard")
         keyboard_header.add_css_class("subtitle")
-        gamepad_header = Gtk.Label(label="Gamepad")
-        gamepad_header.add_css_class("subtitle")
         self.setup_grid.attach(keyboard_header, 1, 0, 1, 1)
-        self.setup_grid.attach(gamepad_header, 2, 0, 1, 1)
-        for index, (action, label) in enumerate(CONTROL_BUTTONS[self.current_control_system]):
+        if not self.is_fceux_setup():
+            gamepad_header = Gtk.Label(label="Gamepad")
+            gamepad_header.add_css_class("subtitle")
+            self.setup_grid.attach(gamepad_header, 2, 0, 1, 1)
+        for index, (action, label) in enumerate(self.current_control_buttons()):
             name = Gtk.Label(label=label, xalign=0)
             name.add_css_class("game-title")
             keyboard_button = Gtk.Button()
             keyboard_button.set_size_request(190, 42)
             keyboard_button.connect("clicked", self.begin_capture, action, "keyboard")
-            gamepad_button = Gtk.Button()
-            gamepad_button.set_size_request(190, 42)
-            gamepad_button.connect("clicked", self.begin_capture, action, "gamepad")
             self.mapping_buttons[action] = keyboard_button
-            self.gamepad_mapping_buttons[action] = gamepad_button
             row = index + 1
             self.setup_grid.attach(name, 0, row, 1, 1)
             self.setup_grid.attach(keyboard_button, 1, row, 1, 1)
-            self.setup_grid.attach(gamepad_button, 2, row, 1, 1)
+            if not self.is_fceux_setup():
+                gamepad_button = Gtk.Button()
+                gamepad_button.set_size_request(190, 42)
+                gamepad_button.connect("clicked", self.begin_capture, action, "gamepad")
+                self.gamepad_mapping_buttons[action] = gamepad_button
+                self.setup_grid.attach(gamepad_button, 2, row, 1, 1)
 
     def open_fceux_settings(self):
         executable = fceux_executable()
@@ -552,12 +587,14 @@ class GameLauncher(Gtk.Application):
             self.status.set_text(f"Could not start FCEUX: {error}")
 
     def read_mapping(self):
+        if self.is_fceux_setup():
+            return read_player_mapping(FCEUX_INPUT_ROOT, self.current_control_player)
         path = self.control_config_path(self.current_control_system)
         if not path.exists():
             return dict(RECOMMENDED_KEYS[self.current_control_system])
         text = path.read_text(encoding="utf-8")
         mapping = dict(RECOMMENDED_KEYS[self.current_control_system])
-        for action, _label in CONTROL_BUTTONS[self.current_control_system]:
+        for action, _label in self.current_control_buttons():
             config_key = self.retroarch_config_key(action)
             match = re.search(
                 rf'^{config_key}\s*=\s*"([^"]*)"', text, re.MULTILINE
@@ -567,12 +604,14 @@ class GameLauncher(Gtk.Application):
         return mapping
 
     def read_gamepad_mapping(self):
+        if self.is_fceux_setup():
+            return {}
         path = self.control_config_path(self.current_control_system)
         if not path.exists():
             return {}
         text = path.read_text(encoding="utf-8")
         mapping = {}
-        for action, _label in CONTROL_BUTTONS[self.current_control_system]:
+        for action, _label in self.current_control_buttons():
             config_key = self.retroarch_config_key(action)
             button = re.search(
                 rf'^{config_key}_btn\s*=\s*"(\d+)"', text, re.MULTILINE
@@ -604,7 +643,7 @@ class GameLauncher(Gtk.Application):
             "left": "Left",
             "right": "Right",
         }
-        for action, _label in CONTROL_BUTTONS[self.current_control_system]:
+        for action, _label in self.current_control_buttons():
             raw = mapping.get(action, "")
             keyval = Gdk.keyval_from_name(self.retro_to_gdk_name(raw)) if raw else 0
             key_name = direction_names.get(raw.casefold())
@@ -612,9 +651,10 @@ class GameLauncher(Gtk.Application):
                 key_name = Gdk.keyval_name(keyval) if keyval else None
             self.mapping_buttons[action].set_label(key_name or "Not set")
             binding = gamepad_mapping.get(action)
-            self.gamepad_mapping_buttons[action].set_label(
-                self.gamepad_binding_label(binding) if binding else "Not set"
-            )
+            if action in self.gamepad_mapping_buttons:
+                self.gamepad_mapping_buttons[action].set_label(
+                    self.gamepad_binding_label(binding) if binding else "Not set"
+                )
 
     def begin_capture(self, button, action, kind):
         if self.capture_action and self.capture_action in self.mapping_buttons:
@@ -642,7 +682,18 @@ class GameLauncher(Gtk.Application):
             ).start()
 
     def save_key(self, action, keyval):
-        self.write_retroarch_settings({action: self.gdk_to_retro_name(keyval)})
+        key_name = Gdk.keyval_name(keyval) or ""
+        if self.is_fceux_setup():
+            mapping = self.read_mapping()
+            mapping[action] = key_name
+            save_player_mapping(
+                FCEUX_CONFIG,
+                FCEUX_INPUT_ROOT,
+                self.current_control_player,
+                mapping,
+            )
+        else:
+            self.write_retroarch_settings({action: self.gdk_to_retro_name(keyval)})
 
     def capture_gamepad_event(self, device, action, token):
         try:
@@ -763,7 +814,15 @@ class GameLauncher(Gtk.Application):
         return path
 
     def set_recommended_keys(self, _button):
-        self.write_retroarch_settings(RECOMMENDED_KEYS[self.current_control_system])
+        if self.is_fceux_setup():
+            save_player_mapping(
+                FCEUX_CONFIG,
+                FCEUX_INPUT_ROOT,
+                self.current_control_player,
+                RECOMMENDED_PLAYER_KEYS[self.current_control_player],
+            )
+        else:
+            self.write_retroarch_settings(RECOMMENDED_KEYS[self.current_control_system])
         self.refresh_mapping_labels()
 
     def on_game_selected(self, _listbox, row):
@@ -925,6 +984,11 @@ class GameLauncher(Gtk.Application):
             return
         use_fceux = platform.system() == "Darwin" and self.current_system == "NES"
         if use_fceux:
+            try:
+                ensure_fceux_profiles(FCEUX_CONFIG, FCEUX_INPUT_ROOT)
+            except OSError as error:
+                self.status.set_text(f"Could not configure FCEUX controls: {error}")
+                return
             command = emulator_command(game)
         else:
             core = {"NES": NES_CORE, "GBA": GBA_CORE, "NDS": NDS_CORE}[self.current_system]

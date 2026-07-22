@@ -37,17 +37,16 @@ games through FCEUX on macOS or games through RetroArch on Linux.
    ```
 
 The launcher supports both Intel and Apple Silicon Macs and finds FCEUX from
-Homebrew automatically. Press F1 in the launcher to open FCEUX and configure
-the keyboard or game controller from its Config menu.
+Homebrew automatically. Open **Settings** from the Home menu to configure
+separate keyboard controls for NES Player 1 and Player 2. Press F1 to open the
+native FCEUX settings.
 
-The included macOS keyboard profile uses:
+The recommended macOS keyboard profiles avoid FCEUX's number-key save slots:
 
-- Arrow keys: D-pad
-- Q: Select; W: Start
-- A: NES A; S: NES B
-- Z: Turbo A; X: Turbo B
+- Player 1: Arrow keys; E Select; R Start; A/S; Z/X turbo
+- Player 2: T/F/G/H directions; Y Select; U Start; J/K; N/M turbo
 
-Reinstall the recommended profile at any time with:
+Reinstall both recommended profiles at any time with:
 
 ```bash
 python3 configure_fceux_macos.py
