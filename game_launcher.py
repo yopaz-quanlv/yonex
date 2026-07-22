@@ -141,12 +141,19 @@ class GameLauncher(Gtk.Application):
         css = Gtk.CssProvider()
         css.load_from_data(b"""
             window { background: #090b12; color: #f7f7fb; }
+            label { color: #f7f7fb; }
+            button {
+                color: #f7f7fb;
+                background-color: #24283b;
+            }
+            button:hover { background-color: #343a55; }
             .hero { font-size: 42px; font-weight: 900; color: #ffdf5d; }
             .subtitle { font-size: 16px; color: #9da6ba; }
             list { background: transparent; }
             row { border-radius: 14px; margin: 5px 0; padding: 5px; }
             row:selected { background: #5846e8; }
-            .game-title { font-size: 25px; font-weight: 700; }
+            row:selected label { color: #ffffff; }
+            .game-title { font-size: 25px; font-weight: 700; color: #f7f7fb; }
             .game-path { font-size: 13px; color: #aeb6c8; }
             .hint { font-size: 14px; color: #aeb6c8; }
             .status { font-size: 15px; color: #6ee7b7; }
