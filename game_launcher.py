@@ -584,35 +584,41 @@ class GameLauncher(Gtk.Application):
         button_visuals = {}
 
         def add_control(number, text, column, row, width=1, css_class="controller-button"):
-            label = Gtk.Label(label=f"{text}\nB{number}")
+            suffix = f"\nB{number}" if number is not None else ""
+            label = Gtk.Label(label=f"{text}{suffix}")
             label.set_justify(Gtk.Justification.CENTER)
             label.set_size_request(72 * width, 54)
             label.add_css_class(css_class)
             layout.attach(label, column, row, width, 1)
-            button_visuals[number] = label
+            if number is not None:
+                button_visuals[number] = label
             return label
 
-        add_control(4, "L", 0, 0, 3, "controller-shoulder")
-        add_control(5, "R", 8, 0, 3, "controller-shoulder")
+        left_trigger = add_control(None, "LT\nAxis 2", 0, 0, 2, "controller-shoulder")
+        add_control(4, "LB", 2, 0, 2, "controller-shoulder")
+        add_control(5, "RB", 7, 0, 2, "controller-shoulder")
+        right_trigger = add_control(None, "RT\nAxis 5", 9, 0, 2, "controller-shoulder")
         dpad = {
-            "up": add_control(10, "↑", 1, 2),
-            "left": add_control(11, "←", 0, 3),
-            "down": add_control(12, "↓", 1, 4),
-            "right": add_control(13, "→", 2, 3),
+            "up": add_control(None, "↑", 1, 2),
+            "left": add_control(None, "←", 0, 3),
+            "down": add_control(None, "↓", 1, 4),
+            "right": add_control(None, "→", 2, 3),
         }
-        add_control(6, "SELECT", 4, 4, 2)
-        add_control(7, "START", 6, 4, 2)
+        add_control(6, "BACK", 4, 2, 2)
+        add_control(8, "HOME", 6, 2)
+        add_control(7, "START", 7, 2, 2)
+        add_control(11, "FN / TURBO", 5, 4, 2)
         add_control(2, "X", 9, 2)
         add_control(3, "Y", 8, 3)
         add_control(0, "A", 10, 3)
         add_control(1, "B", 9, 4)
-        add_control(8, "L3", 3, 6, 2)
-        add_control(9, "R3", 7, 6, 2)
-        left_stick = Gtk.Label(label="LEFT STICK\nAxes 0 / 1")
+        add_control(9, "L3", 3, 6, 2)
+        add_control(10, "R3", 7, 6, 2)
+        left_stick = Gtk.Label(label="LEFT STICK\nX +0  Y +0")
         left_stick.set_justify(Gtk.Justification.CENTER)
         left_stick.add_css_class("controller-button")
         layout.attach(left_stick, 0, 6, 3, 1)
-        right_stick = Gtk.Label(label="RIGHT STICK\nAxes 2 / 3")
+        right_stick = Gtk.Label(label="RIGHT STICK\nX +0  Y +0")
         right_stick.set_justify(Gtk.Justification.CENTER)
         right_stick.add_css_class("controller-button")
         layout.attach(right_stick, 9, 6, 2, 1)
@@ -646,6 +652,7 @@ class GameLauncher(Gtk.Application):
             "button_visuals": button_visuals,
             "left_stick": left_stick, "right_stick": right_stick,
             "dpad": dpad,
+            "left_trigger": left_trigger, "right_trigger": right_trigger,
         }
         self.physical_test_values[device] = {}
         return False
@@ -676,9 +683,11 @@ class GameLauncher(Gtk.Application):
                 label.remove_css_class("test-active")
                 label.set_text(f"Button {number}")
         elif event_type == 2:
-            if number in (0, 6):
+            values = self.physical_test_values.setdefault(device, {})
+            values[number] = value
+            if number == 6:
                 directions = ("left", "right")
-            elif number in (1, 7):
+            elif number == 7:
                 directions = ("up", "down")
             else:
                 directions = ()
@@ -692,14 +701,36 @@ class GameLauncher(Gtk.Application):
                         card["dpad"][direction].add_css_class("test-active")
                     else:
                         card["dpad"][direction].remove_css_class("test-active")
-            stick = card["left_stick"] if number in (0, 1) else (
-                card["right_stick"] if number in (2, 3) else None
-            )
+            if number in (0, 1):
+                stick = card["left_stick"]
+                stick.set_text(
+                    f"LEFT STICK\nX {values.get(0, 0):+6d}  Y {values.get(1, 0):+6d}"
+                )
+                stick_active = any(abs(values.get(axis, 0)) > 8000 for axis in (0, 1))
+            elif number in (3, 4):
+                stick = card["right_stick"]
+                stick.set_text(
+                    f"RIGHT STICK\nX {values.get(3, 0):+6d}  Y {values.get(4, 0):+6d}"
+                )
+                stick_active = any(abs(values.get(axis, 0)) > 8000 for axis in (3, 4))
+            else:
+                stick = None
+                stick_active = False
             if stick:
-                if abs(value) > 16000:
+                if stick_active:
                     stick.add_css_class("test-active")
                 else:
                     stick.remove_css_class("test-active")
+            trigger = card["left_trigger"] if number == 2 else (
+                card["right_trigger"] if number == 5 else None
+            )
+            if trigger:
+                name = "LT" if number == 2 else "RT"
+                trigger.set_text(f"{name}\nAxis {number}: {value:+6d}")
+                if value > -16000:
+                    trigger.add_css_class("test-active")
+                else:
+                    trigger.remove_css_class("test-active")
             label = card["axes"].get(number)
             if label is None:
                 label = Gtk.Label()
@@ -708,7 +739,8 @@ class GameLauncher(Gtk.Application):
                 card["axes_box"].append(label)
                 card["axes"][number] = label
             label.set_text(f"Axis {number}: {value:+6d}")
-            if abs(value) > 16000:
+            active = value > -16000 if number in (2, 5) else abs(value) > 16000
+            if active:
                 label.add_css_class("test-active")
             else:
                 label.remove_css_class("test-active")
@@ -759,9 +791,15 @@ class GameLauncher(Gtk.Application):
                 for visual in (
                     physical["left_stick"],
                     physical["right_stick"],
+                    physical["left_trigger"],
+                    physical["right_trigger"],
                     *physical["dpad"].values(),
                 ):
                     visual.remove_css_class("test-active")
+                physical["left_stick"].set_text("LEFT STICK\nX +0  Y +0")
+                physical["right_stick"].set_text("RIGHT STICK\nX +0  Y +0")
+                physical["left_trigger"].set_text("LT\nAxis 2")
+                physical["right_trigger"].set_text("RT\nAxis 5")
                 for label in physical["buttons"].values():
                     label.remove_css_class("test-active")
                 for label in physical["axes"].values():
