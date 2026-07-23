@@ -3,6 +3,7 @@ import os
 import subprocess
 import re
 import hashlib
+import shutil
 import threading
 import zipfile
 import glob
@@ -103,6 +104,8 @@ class GameLauncher(Gtk.Application):
         self.settings_listbox = None
         self.gamepad_monitor_started = False
         self.game_running = False
+        self.running_game = None
+        self.live_capture_token = 0
         self.controller_test_cards = {}
         self.controller_test_state = {}
         self.physical_test_cards = {}
@@ -1125,10 +1128,26 @@ class GameLauncher(Gtk.Application):
         try:
             core = {"NES": NES_CORE, "GBA": GBA_CORE, "NDS": NDS_CORE}[self.current_system]
             controls = self.ensure_control_config(self.current_system)
+            capture_config, capture_directory = self.start_thumbnail_capture(game, controls)
             process = subprocess.Popen(
-                [RETROARCH, "--fullscreen", f"--appendconfig={controls}", "-L", core, str(game)]
+                [
+                    RETROARCH,
+                    "--fullscreen",
+                    f"--appendconfig={controls}|{capture_config}",
+                    "-L",
+                    core,
+                    str(game),
+                ]
             )
             self.game_running = True
+            self.running_game = game
+            self.live_capture_token += 1
+            token = self.live_capture_token
+            threading.Thread(
+                target=self.watch_thumbnail_capture,
+                args=(game, capture_directory, token),
+                daemon=True,
+            ).start()
         except OSError as error:
             self.window.present()
             self.status.set_text(f"Could not start RetroArch: {error}")
@@ -1138,6 +1157,7 @@ class GameLauncher(Gtk.Application):
 
     def game_finished(self, _pid, _status):
         self.game_running = False
+        self.running_game = None
         page_number, page_games = self.pages[self.current_page]
         if self.current_system == "NES":
             self.status.set_text(
@@ -1146,6 +1166,73 @@ class GameLauncher(Gtk.Application):
         else:
             self.status.set_text(f"{len(page_games)} {self.current_system} game(s)  •  A–Z")
         self.window.present()
+
+    @staticmethod
+    def start_thumbnail_capture(game, controls):
+        identity = hashlib.sha1(str(game).encode()).hexdigest()[:12]
+        capture_directory = ART_CACHE / "start-captures" / identity
+        capture_directory.mkdir(parents=True, exist_ok=True)
+        for old_capture in capture_directory.glob("*.png"):
+            old_capture.unlink(missing_ok=True)
+
+        text = controls.read_text(encoding="utf-8")
+        lines = [
+            f'screenshot_directory = "{capture_directory}"',
+            'auto_screenshot_filename = "true"',
+        ]
+        mappings = {
+            match.group(1): match.group(2)
+            for match in re.finditer(
+                r'^input_player1_start(?:_(btn|axis))?\s*=\s*"([^"]*)"',
+                text,
+                re.MULTILINE,
+            )
+        }
+        keyboard = mappings.get(None)
+        if keyboard and keyboard != "nul":
+            lines.append(f'input_screenshot = "{keyboard}"')
+        for kind in ("btn", "axis"):
+            value = mappings.get(kind)
+            if value and value != "nul":
+                lines.append(f'input_screenshot_{kind} = "{value}"')
+
+        capture_config = capture_directory / "capture.cfg"
+        capture_config.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return capture_config, capture_directory
+
+    def watch_thumbnail_capture(self, game, capture_directory, token):
+        screenshot = None
+        while token == self.live_capture_token:
+            captures = sorted(
+                capture_directory.glob("*.png"),
+                key=lambda path: path.stat().st_mtime,
+            )
+            if captures:
+                screenshot = captures[0]
+                break
+            if not self.game_running or self.running_game != game:
+                break
+            time.sleep(0.1)
+        if not screenshot:
+            return
+
+        identity = hashlib.sha1(str(game).encode()).hexdigest()[:12]
+        target = BUNDLED_ART / f"{identity}-screenshot.png"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.parent / f".{identity}-{threading.get_ident()}.png"
+        try:
+            with screenshot.open("rb") as source, temporary.open("wb") as destination:
+                shutil.copyfileobj(source, destination)
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+        GLib.idle_add(self.thumbnail_captured, game)
+
+    def thumbnail_captured(self, game):
+        row = self.listbox.get_selected_row()
+        if row and getattr(row, "game_path", None) == game:
+            self.fetch_artwork(game)
+        return False
 
     def on_key(self, _controller, keyval, _keycode, _state):
         if (_state & Gdk.ModifierType.CONTROL_MASK) and keyval in (Gdk.KEY_c, Gdk.KEY_C):
