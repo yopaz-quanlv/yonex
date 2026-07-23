@@ -1139,7 +1139,7 @@ class GameLauncher(Gtk.Application):
             thumbnail = BUNDLED_ART / f"{identity}-screenshot.png"
             capture = None
             append_configs = [str(controls)]
-            if not thumbnail.exists():
+            if not self.thumbnail_is_usable(thumbnail, self.current_system):
                 capture = self.start_thumbnail_capture(game, controls)
                 append_configs.append(str(capture[0]))
             process = subprocess.Popen(
@@ -1181,6 +1181,23 @@ class GameLauncher(Gtk.Application):
         else:
             self.status.set_text(f"{len(page_games)} {self.current_system} game(s)  •  A–Z")
         self.window.present()
+
+    @staticmethod
+    def thumbnail_is_usable(path, system):
+        if not path.exists():
+            return False
+        try:
+            with Image.open(path) as image:
+                image.verify()
+            if system == "GBA":
+                with Image.open(path) as image:
+                    # Reject near-empty mGBA frames (for example a white screen
+                    # with only the pause indicator) so Start can recapture them.
+                    if image.convert("L").entropy() < 0.5:
+                        return False
+        except (OSError, UnidentifiedImageError):
+            return False
+        return True
 
     @staticmethod
     def start_thumbnail_capture(game, controls):
