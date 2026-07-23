@@ -11,7 +11,7 @@ bundled gameplay artwork and metadata, and launches games through RetroArch.
 - Alphabetical GBA/NDS listings with automatic ROM ZIP detection
 - Keyboard and gamepad navigation (D-pad/analog, A to select, B to go back)
 - Locally captured gameplay artwork with a blurred, darkened game background
-- Pressing Start in a game captures that moment as the game's next thumbnail
+- If a game has no artwork, its first Start press captures a thumbnail
 - Separate NES, GBA, and NDS keyboard/gamepad mapping screens
 - Two-player mapped control test and raw physical button/axis test screens
 - Configurable Save State and Load State controls (F2/F4 by default)

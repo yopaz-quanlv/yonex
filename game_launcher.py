@@ -1135,12 +1135,18 @@ class GameLauncher(Gtk.Application):
         try:
             core = {"NES": NES_CORE, "GBA": GBA_CORE, "NDS": NDS_CORE}[self.current_system]
             controls = self.ensure_control_config(self.current_system)
-            capture_config, capture_directory = self.start_thumbnail_capture(game, controls)
+            identity = hashlib.sha1(str(game).encode()).hexdigest()[:12]
+            thumbnail = BUNDLED_ART / f"{identity}-screenshot.png"
+            capture = None
+            append_configs = [str(controls)]
+            if not thumbnail.exists():
+                capture = self.start_thumbnail_capture(game, controls)
+                append_configs.append(str(capture[0]))
             process = subprocess.Popen(
                 [
                     RETROARCH,
                     "--fullscreen",
-                    f"--appendconfig={controls}|{capture_config}",
+                    f"--appendconfig={'|'.join(append_configs)}",
                     "-L",
                     core,
                     str(game),
@@ -1150,11 +1156,13 @@ class GameLauncher(Gtk.Application):
             self.running_game = game
             self.live_capture_token += 1
             token = self.live_capture_token
-            threading.Thread(
-                target=self.watch_thumbnail_capture,
-                args=(game, capture_directory, token),
-                daemon=True,
-            ).start()
+            if capture:
+                _capture_config, capture_directory = capture
+                threading.Thread(
+                    target=self.watch_thumbnail_capture,
+                    args=(game, capture_directory, token),
+                    daemon=True,
+                ).start()
         except OSError as error:
             self.window.present()
             self.status.set_text(f"Could not start RetroArch: {error}")
