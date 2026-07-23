@@ -29,6 +29,7 @@ GBA_CORE = "/usr/lib/x86_64-linux-gnu/libretro/mgba_libretro.so"
 NDS_CORE = "/usr/lib/x86_64-linux-gnu/libretro/desmume_libretro.so"
 CONTROL_DIR = Path.home() / ".config" / "yones" / "controls"
 ART_CACHE = Path.home() / ".cache" / "nes-game-library"
+BUNDLED_ART = Path(__file__).resolve().parent / "artwork"
 THUMBNAIL_ROOTS = {
     "NES": "https://thumbnails.libretro.com/Nintendo%20-%20Nintendo%20Entertainment%20System",
     "GBA": "https://thumbnails.libretro.com/Nintendo%20-%20Game%20Boy%20Advance",
@@ -986,6 +987,10 @@ class GameLauncher(Gtk.Application):
         identity = hashlib.sha1(str(game).encode()).hexdigest()[:12]
         results = {}
         for kind, folder in (("boxart", "Named_Boxarts"), ("screenshot", "Named_Snaps")):
+            bundled = BUNDLED_ART / f"{identity}-{kind}.png"
+            if bundled.exists():
+                results[kind] = str(bundled)
+                continue
             target = ART_CACHE / f"{identity}-{kind}.png"
             if not target.exists():
                 for candidate in (f"{title} (USA)", f"{title} (USA, Europe)", title):

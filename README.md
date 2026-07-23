@@ -27,3 +27,20 @@ Run the launcher with:
 ```bash
 python3 game_launcher.py
 ```
+
+## Capture missing screenshots
+
+Libretro does not have artwork for every ROM name. Generate the missing
+screenshots locally by starting each game, waiting five emulated seconds, and
+capturing its video output:
+
+```bash
+python3 capture_game_screenshots.py
+```
+
+Existing screenshots are skipped, so the command is safe to resume. Use
+`--system NES` to process only one system, `--wait 8` for games with longer
+loading screens, or `--overwrite` to recapture every screenshot. It captures
+10 games concurrently by default; use `--jobs 4` to reduce GPU and memory use.
+Generated images are stored in `artwork/` so they can be committed with the
+library; the launcher uses these bundled images before its download cache.
