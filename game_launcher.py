@@ -29,7 +29,7 @@ GBA_CORE = "/usr/lib/x86_64-linux-gnu/libretro/mgba_libretro.so"
 NDS_CORE = "/usr/lib/x86_64-linux-gnu/libretro/desmume_libretro.so"
 CONTROL_DIR = Path.home() / ".config" / "yones" / "controls"
 ART_CACHE = Path.home() / ".cache" / "nes-game-library"
-BUNDLED_ART = Path(__file__).resolve().parent / "artwork"
+BUNDLED_ART = Path(os.environ.get("NES_ART_DIR", GAME_ROOT.parent / "artwork"))
 THUMBNAIL_ROOTS = {
     "NES": "https://thumbnails.libretro.com/Nintendo%20-%20Nintendo%20Entertainment%20System",
     "GBA": "https://thumbnails.libretro.com/Nintendo%20-%20Game%20Boy%20Advance",
