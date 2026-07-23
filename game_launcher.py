@@ -135,6 +135,32 @@ class GameLauncher(Gtk.Application):
             .status { font-size: 15px; color: #6ee7b7; }
             .test-active { background: #16a36a; color: white; border-radius: 10px; }
             .game-background-shade { background: rgba(9, 11, 18, 0.80); }
+            .controller-shell {
+                background: rgba(35, 40, 55, 0.92);
+                border: 2px solid #687086;
+                border-radius: 34px;
+                padding: 20px;
+            }
+            .controller-button {
+                background: #171b27;
+                border: 1px solid #7d879d;
+                border-radius: 22px;
+                padding: 8px;
+                font-size: 16px;
+                font-weight: 700;
+            }
+            .controller-shoulder {
+                background: #171b27;
+                border: 1px solid #7d879d;
+                border-radius: 10px;
+                padding: 8px 20px;
+                font-weight: 700;
+            }
+            .controller-button.test-active,
+            .controller-shoulder.test-active {
+                background: #16a36a;
+                color: white;
+            }
         """)
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
@@ -533,6 +559,45 @@ class GameLauncher(Gtk.Application):
         content.set_margin_bottom(16)
         content.set_margin_start(16)
         content.set_margin_end(16)
+        layout = Gtk.Grid(column_spacing=10, row_spacing=10)
+        layout.set_column_homogeneous(True)
+        layout.add_css_class("controller-shell")
+        layout.set_hexpand(True)
+        button_visuals = {}
+
+        def add_control(number, text, column, row, width=1, css_class="controller-button"):
+            label = Gtk.Label(label=f"{text}\nB{number}")
+            label.set_justify(Gtk.Justification.CENTER)
+            label.set_size_request(72 * width, 54)
+            label.add_css_class(css_class)
+            layout.attach(label, column, row, width, 1)
+            button_visuals[number] = label
+            return label
+
+        add_control(4, "L", 0, 0, 3, "controller-shoulder")
+        add_control(5, "R", 8, 0, 3, "controller-shoulder")
+        dpad = {
+            "up": add_control(10, "↑", 1, 2),
+            "left": add_control(11, "←", 0, 3),
+            "down": add_control(12, "↓", 1, 4),
+            "right": add_control(13, "→", 2, 3),
+        }
+        add_control(6, "SELECT", 4, 4, 2)
+        add_control(7, "START", 6, 4, 2)
+        add_control(2, "X", 9, 2)
+        add_control(3, "Y", 8, 3)
+        add_control(0, "A", 10, 3)
+        add_control(1, "B", 9, 4)
+        add_control(8, "L3", 3, 6, 2)
+        add_control(9, "R3", 7, 6, 2)
+        left_stick = Gtk.Label(label="LEFT STICK\nAxes 0 / 1")
+        left_stick.set_justify(Gtk.Justification.CENTER)
+        left_stick.add_css_class("controller-button")
+        layout.attach(left_stick, 0, 6, 3, 1)
+        right_stick = Gtk.Label(label="RIGHT STICK\nAxes 2 / 3")
+        right_stick.set_justify(Gtk.Justification.CENTER)
+        right_stick.add_css_class("controller-button")
+        layout.attach(right_stick, 9, 6, 2, 1)
         buttons_title = Gtk.Label(label="BUTTONS", xalign=0)
         buttons_title.add_css_class("subtitle")
         buttons = Gtk.FlowBox()
@@ -545,6 +610,7 @@ class GameLauncher(Gtk.Application):
         axes.set_max_children_per_line(4)
         waiting = Gtk.Label(label="Press or move any control to discover its input.", xalign=0)
         waiting.add_css_class("status")
+        content.append(layout)
         content.append(buttons_title)
         content.append(buttons)
         content.append(axes_title)
@@ -555,6 +621,9 @@ class GameLauncher(Gtk.Application):
         self.physical_test_cards[device] = {
             "frame": frame, "buttons_box": buttons, "axes_box": axes,
             "buttons": {}, "axes": {}, "waiting": waiting,
+            "button_visuals": button_visuals,
+            "left_stick": left_stick, "right_stick": right_stick,
+            "dpad": dpad,
         }
         self.physical_test_values[device] = {}
         return False
@@ -565,6 +634,12 @@ class GameLauncher(Gtk.Application):
         card = self.physical_test_cards[device]
         card["waiting"].set_visible(False)
         if event_type == 1:
+            visual = card["button_visuals"].get(number)
+            if visual:
+                if value:
+                    visual.add_css_class("test-active")
+                else:
+                    visual.remove_css_class("test-active")
             label = card["buttons"].get(number)
             if label is None:
                 label = Gtk.Label(label=f"Button {number}")
@@ -579,6 +654,30 @@ class GameLauncher(Gtk.Application):
                 label.remove_css_class("test-active")
                 label.set_text(f"Button {number}")
         elif event_type == 2:
+            if number in (0, 6):
+                directions = ("left", "right")
+            elif number in (1, 7):
+                directions = ("up", "down")
+            else:
+                directions = ()
+            if directions:
+                negative, positive = directions
+                for direction, active in (
+                    (negative, value < -16000),
+                    (positive, value > 16000),
+                ):
+                    if active:
+                        card["dpad"][direction].add_css_class("test-active")
+                    else:
+                        card["dpad"][direction].remove_css_class("test-active")
+            stick = card["left_stick"] if number in (0, 1) else (
+                card["right_stick"] if number in (2, 3) else None
+            )
+            if stick:
+                if abs(value) > 16000:
+                    stick.add_css_class("test-active")
+                else:
+                    stick.remove_css_class("test-active")
             label = card["axes"].get(number)
             if label is None:
                 label = Gtk.Label()
