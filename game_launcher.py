@@ -1015,10 +1015,15 @@ class GameLauncher(Gtk.Application):
         row = self.listbox.get_selected_row()
         if not row or getattr(row, "game_path", None) != game:
             return False
-        if results.get("boxart"):
-            self.boxart.set_filename(results["boxart"])
-        if results.get("screenshot"):
-            self.screenshot.set_filename(results["screenshot"])
+        screenshot = results.get("screenshot")
+        boxart = results.get("boxart")
+        # Locally captured gameplay is the canonical thumbnail. Use downloaded
+        # box art only as a fallback when no captured image exists.
+        if screenshot:
+            self.boxart.set_filename(screenshot)
+            self.screenshot.set_filename(screenshot)
+        elif boxart:
+            self.boxart.set_filename(boxart)
         return False
 
     def refresh(self):
