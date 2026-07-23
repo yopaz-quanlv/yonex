@@ -4,8 +4,6 @@ import subprocess
 import re
 import hashlib
 import threading
-import urllib.parse
-import urllib.request
 import zipfile
 import glob
 import struct
@@ -13,6 +11,7 @@ import time
 from pathlib import Path
 
 import gi
+from PIL import Image, ImageFilter
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
@@ -30,11 +29,6 @@ NDS_CORE = "/usr/lib/x86_64-linux-gnu/libretro/desmume_libretro.so"
 CONTROL_DIR = Path.home() / ".config" / "yones" / "controls"
 ART_CACHE = Path.home() / ".cache" / "nes-game-library"
 BUNDLED_ART = Path(os.environ.get("NES_ART_DIR", GAME_ROOT.parent / "artwork"))
-THUMBNAIL_ROOTS = {
-    "NES": "https://thumbnails.libretro.com/Nintendo%20-%20Nintendo%20Entertainment%20System",
-    "GBA": "https://thumbnails.libretro.com/Nintendo%20-%20Game%20Boy%20Advance",
-    "NDS": "https://thumbnails.libretro.com/Nintendo%20-%20Nintendo%20DS",
-}
 GAME_METADATA = {
     "contra": ("1988", "Run and gun", "Konami", "1–2 players"),
     "super mario bros. 3": ("1990", "Platform", "Nintendo", "1–2 players"),
@@ -136,6 +130,7 @@ class GameLauncher(Gtk.Application):
             .hint { font-size: 14px; color: #aeb6c8; }
             .status { font-size: 15px; color: #6ee7b7; }
             .test-active { background: #16a36a; color: white; border-radius: 10px; }
+            .game-background-shade { background: rgba(9, 11, 18, 0.80); }
         """)
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
@@ -190,7 +185,21 @@ class GameLauncher(Gtk.Application):
         self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         self.stack.set_transition_duration(180)
         self.stack.add_named(self.build_home_page(), "home")
-        self.stack.add_named(outer, "games")
+        games_overlay = Gtk.Overlay()
+        self.game_background = Gtk.Picture()
+        self.game_background.set_content_fit(Gtk.ContentFit.COVER)
+        self.game_background.set_hexpand(True)
+        self.game_background.set_vexpand(True)
+        self.game_background.set_can_target(False)
+        games_overlay.set_child(self.game_background)
+        shade = Gtk.Box()
+        shade.add_css_class("game-background-shade")
+        shade.set_hexpand(True)
+        shade.set_vexpand(True)
+        shade.set_can_target(False)
+        games_overlay.add_overlay(shade)
+        games_overlay.add_overlay(outer)
+        self.stack.add_named(games_overlay, "games")
         self.stack.add_named(self.build_settings_menu(), "settings_menu")
         self.stack.add_named(self.build_setup_page(), "setup")
         self.stack.add_named(self.build_controller_test_page(), "controller_test")
@@ -676,18 +685,14 @@ class GameLauncher(Gtk.Application):
         self.detail_title = Gtk.Label(label="Select a game", xalign=0)
         self.detail_title.add_css_class("game-title")
         self.detail_title.set_wrap(True)
-        self.boxart = Gtk.Picture()
-        self.boxart.set_size_request(260, 300)
-        self.boxart.set_content_fit(Gtk.ContentFit.CONTAIN)
-        self.screenshot = Gtk.Picture()
-        self.screenshot.set_size_request(320, 180)
-        self.screenshot.set_content_fit(Gtk.ContentFit.CONTAIN)
+        self.artwork = Gtk.Picture()
+        self.artwork.set_size_request(360, 270)
+        self.artwork.set_content_fit(Gtk.ContentFit.CONTAIN)
         self.detail_meta = Gtk.Label(xalign=0, yalign=0)
         self.detail_meta.add_css_class("subtitle")
         self.detail_meta.set_wrap(True)
         panel.append(self.detail_title)
-        panel.append(self.boxart)
-        panel.append(self.screenshot)
+        panel.append(self.artwork)
         panel.append(self.detail_meta)
         return panel
 
@@ -970,8 +975,8 @@ class GameLauncher(Gtk.Application):
             return
         title = self.pretty_name(game)
         self.detail_title.set_text(title)
-        self.boxart.set_filename(None)
-        self.screenshot.set_filename(None)
+        self.artwork.set_filename(None)
+        self.game_background.set_filename(None)
         year, genre, publisher, players = GAME_METADATA.get(
             title.casefold(), ("Unknown", f"{self.current_system} game", "Unknown", "Unknown")
         )
@@ -979,51 +984,37 @@ class GameLauncher(Gtk.Application):
             f"Year: {year}\nGenre: {genre}\nPublisher: {publisher}\nPlayers: {players}\n\n{game.name}"
         )
         threading.Thread(
-            target=self.fetch_artwork, args=(game, title, self.current_system), daemon=True
+            target=self.fetch_artwork, args=(game,), daemon=True
         ).start()
 
-    def fetch_artwork(self, game, title, system):
-        ART_CACHE.mkdir(parents=True, exist_ok=True)
+    def fetch_artwork(self, game):
         identity = hashlib.sha1(str(game).encode()).hexdigest()[:12]
-        results = {}
-        for kind, folder in (("boxart", "Named_Boxarts"), ("screenshot", "Named_Snaps")):
-            bundled = BUNDLED_ART / f"{identity}-{kind}.png"
-            if bundled.exists():
-                results[kind] = str(bundled)
-                continue
-            target = ART_CACHE / f"{identity}-{kind}.png"
-            if not target.exists():
-                for candidate in (f"{title} (USA)", f"{title} (USA, Europe)", title):
-                    filename = urllib.parse.quote(f"{candidate}.png", safe="()',")
-                    url = f"{THUMBNAIL_ROOTS[system]}/{folder}/{filename}"
-                    try:
-                        request = urllib.request.Request(
-                            url, headers={"User-Agent": "NES-Game-Library/1.0"}
-                        )
-                        with urllib.request.urlopen(request, timeout=8) as response:
-                            data = response.read()
-                        if data.startswith(b"\x89PNG"):
-                            target.write_bytes(data)
-                            break
-                    except Exception:
-                        continue
-            if target.exists():
-                results[kind] = str(target)
-        GLib.idle_add(self.show_artwork, game, results)
+        screenshot = BUNDLED_ART / f"{identity}-screenshot.png"
+        if not screenshot.exists():
+            GLib.idle_add(self.show_artwork, game, None, None)
+            return
 
-    def show_artwork(self, game, results):
+        blur_directory = ART_CACHE / "blurred"
+        blur_directory.mkdir(parents=True, exist_ok=True)
+        blurred = blur_directory / f"{identity}.png"
+        if not blurred.exists() or blurred.stat().st_mtime < screenshot.stat().st_mtime:
+            temporary = blur_directory / f".{identity}-{threading.get_ident()}.png"
+            try:
+                with Image.open(screenshot) as image:
+                    image.convert("RGB").filter(ImageFilter.GaussianBlur(24)).save(temporary, "PNG")
+                os.replace(temporary, blurred)
+            finally:
+                temporary.unlink(missing_ok=True)
+        GLib.idle_add(self.show_artwork, game, str(screenshot), str(blurred))
+
+    def show_artwork(self, game, screenshot, blurred):
         row = self.listbox.get_selected_row()
         if not row or getattr(row, "game_path", None) != game:
             return False
-        screenshot = results.get("screenshot")
-        boxart = results.get("boxart")
-        # Locally captured gameplay is the canonical thumbnail. Use downloaded
-        # box art only as a fallback when no captured image exists.
         if screenshot:
-            self.boxart.set_filename(screenshot)
-            self.screenshot.set_filename(screenshot)
-        elif boxart:
-            self.boxart.set_filename(boxart)
+            self.artwork.set_filename(screenshot)
+        if blurred:
+            self.game_background.set_filename(blurred)
         return False
 
     def refresh(self):

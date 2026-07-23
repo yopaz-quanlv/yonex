@@ -2,7 +2,7 @@
 
 A fullscreen GTK 4 retro game library for Ubuntu. It discovers paged NES games
 inside `./games/Page N` plus GBA and Nintendo DS games in `~/Downloads`, displays
-cached Libretro artwork and metadata, and launches games through RetroArch.
+bundled gameplay artwork and metadata, and launches games through RetroArch.
 
 ## Features
 
@@ -10,7 +10,7 @@ cached Libretro artwork and metadata, and launches games through RetroArch.
 - Folder-based NES pages controlled with Left/Right
 - Alphabetical GBA/NDS listings with automatic ROM ZIP detection
 - Keyboard and gamepad navigation (D-pad/analog, A to select, B to go back)
-- Box art and gameplay screenshots from Libretro Thumbnails
+- Locally captured gameplay artwork with a blurred, darkened game background
 - Separate NES, GBA, and NDS keyboard/gamepad mapping screens
 - Two-player mapped control test and raw physical button/axis test screens
 - Configurable Save State and Load State controls (F2/F4 by default)
@@ -30,9 +30,8 @@ python3 game_launcher.py
 
 ## Capture missing screenshots
 
-Libretro does not have artwork for every ROM name. Generate the missing
-screenshots locally by starting each game, waiting five emulated seconds, and
-capturing its video output:
+Generate missing screenshots locally by starting each game, waiting five
+emulated seconds, and capturing its video output:
 
 ```bash
 python3 capture_game_screenshots.py
