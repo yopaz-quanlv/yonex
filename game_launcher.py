@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 import gi
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, UnidentifiedImageError
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
@@ -1003,8 +1003,15 @@ class GameLauncher(Gtk.Application):
         if not blurred.exists() or blurred.stat().st_mtime < screenshot.stat().st_mtime:
             temporary = blur_directory / f".{identity}-{threading.get_ident()}.png"
             try:
-                with Image.open(screenshot) as image:
-                    image.convert("RGB").filter(ImageFilter.GaussianBlur(24)).save(temporary, "PNG")
+                try:
+                    with Image.open(screenshot) as image:
+                        image.load()
+                        image.convert("RGB").filter(ImageFilter.GaussianBlur(24)).save(
+                            temporary, "PNG"
+                        )
+                except (OSError, UnidentifiedImageError):
+                    GLib.idle_add(self.show_artwork, game, None, None)
+                    return
                 os.replace(temporary, blurred)
             finally:
                 temporary.unlink(missing_ok=True)
@@ -1202,14 +1209,29 @@ class GameLauncher(Gtk.Application):
 
     def watch_thumbnail_capture(self, game, capture_directory, token):
         screenshot = None
+        previous_size = -1
+        stable_checks = 0
         while token == self.live_capture_token:
             captures = sorted(
                 capture_directory.glob("*.png"),
                 key=lambda path: path.stat().st_mtime,
             )
             if captures:
-                screenshot = captures[0]
-                break
+                candidate = captures[0]
+                size = candidate.stat().st_size
+                if size > 0 and size == previous_size:
+                    stable_checks += 1
+                else:
+                    previous_size = size
+                    stable_checks = 0
+                if stable_checks >= 2:
+                    try:
+                        with Image.open(candidate) as image:
+                            image.verify()
+                        screenshot = candidate
+                        break
+                    except (OSError, UnidentifiedImageError):
+                        stable_checks = 0
             if not self.game_running or self.running_game != game:
                 break
             time.sleep(0.1)
@@ -1223,7 +1245,11 @@ class GameLauncher(Gtk.Application):
         try:
             with screenshot.open("rb") as source, temporary.open("wb") as destination:
                 shutil.copyfileobj(source, destination)
+            with Image.open(temporary) as image:
+                image.verify()
             os.replace(temporary, target)
+        except (OSError, UnidentifiedImageError):
+            return
         finally:
             temporary.unlink(missing_ok=True)
         GLib.idle_add(self.thumbnail_captured, game)
