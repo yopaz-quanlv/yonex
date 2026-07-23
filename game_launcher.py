@@ -22,6 +22,7 @@ from gi.repository import Gdk, GLib, Gtk
 ROM_EXTENSIONS = {".nes"}
 PAGE_DIRECTORY = re.compile(r"^Page\s+(\d+)$", re.IGNORECASE)
 GAME_ROOT = Path(os.environ.get("NES_GAME_DIR", Path.home() / "yones" / "games"))
+GBA_ROOT = Path(os.environ.get("GBA_GAME_DIR", GAME_ROOT / "GBA"))
 DOWNLOADS = Path.home() / "Downloads"
 RETROARCH = "/usr/bin/retroarch"
 NES_CORE = "/usr/lib/x86_64-linux-gnu/libretro/nestopia_libretro.so"
@@ -1030,9 +1031,10 @@ class GameLauncher(Gtk.Application):
     def refresh(self):
         if self.current_system in ("GBA", "NDS"):
             extension = ".gba" if self.current_system == "GBA" else ".nds"
-            direct_games = [p for p in DOWNLOADS.rglob(f"*{extension}") if p.is_file()]
+            root = GBA_ROOT if self.current_system == "GBA" else DOWNLOADS
+            direct_games = [p for p in root.rglob(f"*{extension}") if p.is_file()]
             archives = [
-                p for p in DOWNLOADS.rglob("*.zip")
+                p for p in root.rglob("*.zip")
                 if self.is_archive_with_extension(p, extension)
             ]
             games = sorted(direct_games + archives, key=lambda path: path.stem.casefold())
@@ -1077,7 +1079,11 @@ class GameLauncher(Gtk.Application):
             box.set_margin_end(18)
             name = Gtk.Label(label=self.pretty_name(game), xalign=0)
             name.add_css_class("game-title")
-            root = GAME_ROOT if self.current_system == "NES" else DOWNLOADS
+            root = {
+                "NES": GAME_ROOT,
+                "GBA": GBA_ROOT,
+                "NDS": DOWNLOADS,
+            }[self.current_system]
             path = Gtk.Label(label=str(game.relative_to(root)), xalign=0)
             path.add_css_class("game-path")
             box.append(name)

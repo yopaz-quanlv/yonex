@@ -13,6 +13,7 @@ from pathlib import Path
 from game_launcher import (
     BUNDLED_ART,
     DOWNLOADS,
+    GBA_ROOT,
     GAME_ROOT,
     GBA_CORE,
     NDS_CORE,
@@ -36,7 +37,7 @@ def screenshot_path(game):
 
 def find_games(system):
     extension, _core = SYSTEMS[system]
-    root = GAME_ROOT if system == "NES" else DOWNLOADS
+    root = {"NES": GAME_ROOT, "GBA": GBA_ROOT, "NDS": DOWNLOADS}[system]
     direct = [path for path in root.rglob(f"*{extension}") if path.is_file()]
     if system == "NES":
         return sorted(direct, key=GameLauncher.game_sort_key)

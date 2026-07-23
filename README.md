@@ -1,7 +1,8 @@
 # Yonex NES Game Library
 
 A fullscreen GTK 4 retro game library for Ubuntu. It discovers paged NES games
-inside `./games/Page N` plus GBA and Nintendo DS games in `~/Downloads`, displays
+inside `./games/Page N`, GBA games in `./games/GBA`, and Nintendo DS games in
+`~/Downloads`, displays
 bundled gameplay artwork and metadata, and launches games through RetroArch.
 
 ## Features
