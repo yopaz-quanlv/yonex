@@ -540,6 +540,8 @@ class GameLauncher(Gtk.Application):
         page.append(subtitle)
         page.append(scroll)
         page.append(back)
+        for index in range(2):
+            self.physical_controller_connected(f"/dev/input/js{index}")
         return page
 
     def show_physical_test(self):
@@ -549,11 +551,27 @@ class GameLauncher(Gtk.Application):
 
     def physical_controller_connected(self, device):
         if device in self.physical_test_cards:
+            card = self.physical_test_cards[device]
+            player = int(Path(device).name[2:]) + 1
+            connected = Path(device).exists()
+            card["frame"].set_label(
+                f"Player {player}  •  {device}" if connected
+                else f"Player {player}  •  Not connected"
+            )
+            card["waiting"].set_text(
+                "Press or move any control to discover its input."
+                if connected else "Connect a controller to this player slot."
+            )
+            card["waiting"].set_visible(True)
             return False
         if self.physical_test_empty.get_parent():
             self.physical_test_box.remove(self.physical_test_empty)
         player = int(Path(device).name[2:]) + 1
-        frame = Gtk.Frame(label=f"Player {player}  •  {device}")
+        connected = Path(device).exists()
+        frame = Gtk.Frame(
+            label=f"Player {player}  •  {device}" if connected
+            else f"Player {player}  •  Not connected"
+        )
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         content.set_margin_top(16)
         content.set_margin_bottom(16)
@@ -608,7 +626,11 @@ class GameLauncher(Gtk.Application):
         axes = Gtk.FlowBox()
         axes.set_selection_mode(Gtk.SelectionMode.NONE)
         axes.set_max_children_per_line(4)
-        waiting = Gtk.Label(label="Press or move any control to discover its input.", xalign=0)
+        waiting = Gtk.Label(
+            label="Press or move any control to discover its input."
+            if connected else "Connect a controller to this player slot.",
+            xalign=0,
+        )
         waiting.add_css_class("status")
         content.append(layout)
         content.append(buttons_title)
@@ -724,10 +746,29 @@ class GameLauncher(Gtk.Application):
         return False
 
     def controller_disconnected(self, device):
-        physical = self.physical_test_cards.pop(device, None)
+        physical = self.physical_test_cards.get(device)
         self.physical_test_values.pop(device, None)
         if physical:
-            self.physical_test_box.remove(physical["frame"])
+            player = int(Path(device).name[2:]) + 1
+            if player <= 2:
+                physical["frame"].set_label(f"Player {player}  •  Not connected")
+                physical["waiting"].set_text("Connect a controller to this player slot.")
+                physical["waiting"].set_visible(True)
+                for visual in physical["button_visuals"].values():
+                    visual.remove_css_class("test-active")
+                for visual in (
+                    physical["left_stick"],
+                    physical["right_stick"],
+                    *physical["dpad"].values(),
+                ):
+                    visual.remove_css_class("test-active")
+                for label in physical["buttons"].values():
+                    label.remove_css_class("test-active")
+                for label in physical["axes"].values():
+                    label.remove_css_class("test-active")
+            else:
+                self.physical_test_cards.pop(device, None)
+                self.physical_test_box.remove(physical["frame"])
         if not self.physical_test_cards and not self.physical_test_empty.get_parent():
             self.physical_test_box.append(self.physical_test_empty)
         card = self.controller_test_cards.pop(device, None)
