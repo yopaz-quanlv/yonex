@@ -12,6 +12,7 @@ cached Libretro artwork and metadata, and launches games through RetroArch.
 - Keyboard and gamepad navigation (D-pad/analog, A to select, B to go back)
 - Box art and gameplay screenshots from Libretro Thumbnails
 - Separate NES, GBA, and NDS keyboard/gamepad mapping screens
+- Two-player mapped control test and raw physical button/axis test screens
 - Configurable Save State and Load State controls (F2/F4 by default)
 - Fullscreen RetroArch launching
 

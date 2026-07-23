@@ -108,6 +108,10 @@ class GameLauncher(Gtk.Application):
         self.settings_listbox = None
         self.gamepad_monitor_started = False
         self.game_running = False
+        self.controller_test_cards = {}
+        self.controller_test_state = {}
+        self.physical_test_cards = {}
+        self.physical_test_values = {}
 
     def do_activate(self):
         if self.window:
@@ -130,6 +134,7 @@ class GameLauncher(Gtk.Application):
             .game-path { font-size: 13px; color: #aeb6c8; }
             .hint { font-size: 14px; color: #aeb6c8; }
             .status { font-size: 15px; color: #6ee7b7; }
+            .test-active { background: #16a36a; color: white; border-radius: 10px; }
         """)
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
@@ -187,6 +192,8 @@ class GameLauncher(Gtk.Application):
         self.stack.add_named(outer, "games")
         self.stack.add_named(self.build_settings_menu(), "settings_menu")
         self.stack.add_named(self.build_setup_page(), "setup")
+        self.stack.add_named(self.build_controller_test_page(), "controller_test")
+        self.stack.add_named(self.build_physical_test_page(), "physical_test")
         self.window.set_child(self.stack)
 
         keys = Gtk.EventControllerKey()
@@ -205,51 +212,66 @@ class GameLauncher(Gtk.Application):
 
     def monitor_gamepad(self):
         """Hot-plug monitor for common USB/Bluetooth controllers via joydev."""
+        open_devices = {}
+        axis_active = {}
         while True:
             devices = sorted(glob.glob("/dev/input/js*"))
-            if not devices:
-                time.sleep(1)
-                continue
-            try:
-                fd = os.open(devices[0], os.O_RDONLY | os.O_NONBLOCK)
-                axis_active = {}
+            for device in list(open_devices):
+                if device not in devices:
+                    os.close(open_devices.pop(device))
+                    axis_active.pop(device, None)
+                    GLib.idle_add(self.controller_disconnected, device)
+            for device in devices:
+                if device in open_devices:
+                    continue
                 try:
-                    while devices[0] in glob.glob("/dev/input/js*"):
-                        try:
-                            data = os.read(fd, 8)
-                        except BlockingIOError:
-                            time.sleep(0.02)
-                            continue
+                    open_devices[device] = os.open(device, os.O_RDONLY | os.O_NONBLOCK)
+                    axis_active[device] = {}
+                    GLib.idle_add(self.controller_connected, device)
+                except OSError:
+                    continue
+            for device, fd in list(open_devices.items()):
+                try:
+                    while True:
+                        data = os.read(fd, 8)
                         if len(data) != 8:
                             break
                         _stamp, value, event_type, number = struct.unpack("<IhBB", data)
                         if event_type & 0x80:
                             continue
                         event_type &= 0x7F
+                        GLib.idle_add(
+                            self.handle_controller_test_event,
+                            device, event_type, number, value,
+                        )
                         action = None
                         if event_type == 1 and value:
                             action = {0: "accept", 1: "back", 7: "accept"}.get(number)
                         elif event_type == 2:
                             direction = 1 if value > 16000 else -1 if value < -16000 else 0
-                            previous = axis_active.get(number, 0)
-                            axis_active[number] = direction
+                            previous = axis_active[device].get(number, 0)
+                            axis_active[device][number] = direction
                             if direction and direction != previous:
                                 if number in (0, 6):
                                     action = "right" if direction > 0 else "left"
                                 elif number in (1, 7):
                                     action = "down" if direction > 0 else "up"
-                        if action:
+                        if action and device == devices[0]:
                             GLib.idle_add(self.handle_gamepad_navigation, action)
-                finally:
-                    os.close(fd)
-            except OSError:
-                pass
-            time.sleep(1)
+                except BlockingIOError:
+                    pass
+                except OSError:
+                    os.close(open_devices.pop(device))
+                    axis_active.pop(device, None)
+                    GLib.idle_add(self.controller_disconnected, device)
+            time.sleep(0.02)
 
     def handle_gamepad_navigation(self, action):
         if self.game_running or self.capture_kind == "gamepad":
             return False
         screen = self.stack.get_visible_child_name()
+        if screen in ("controller_test", "physical_test"):
+            return False
         listbox = self.home_listbox if screen == "home" else (
             self.settings_listbox if screen == "settings_menu" else self.listbox
         )
@@ -282,7 +304,7 @@ class GameLauncher(Gtk.Application):
         if action == "back":
             if screen == "games" or screen == "settings_menu":
                 self.show_home()
-            elif screen == "setup":
+            elif screen in ("setup", "controller_test", "physical_test"):
                 self.show_settings_menu()
         return False
 
@@ -367,9 +389,16 @@ class GameLauncher(Gtk.Application):
         self.settings_listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self.settings_listbox.set_activate_on_single_click(False)
         self.settings_listbox.connect("row-activated", self.activate_settings_row)
-        for system in ("NES", "GBA", "NDS"):
+        for system in (
+            "NES", "GBA", "NDS", "Test Mapped Controls", "Test Physical Inputs"
+        ):
             row = Gtk.ListBoxRow()
-            label = Gtk.Label(label=f"{system} Controls", xalign=0)
+            label_text = (
+                f"{system} Controls"
+                if system in ("NES", "GBA", "NDS")
+                else system
+            )
+            label = Gtk.Label(label=label_text, xalign=0)
             label.add_css_class("game-title")
             label.set_margin_top(26)
             label.set_margin_bottom(26)
@@ -394,7 +423,249 @@ class GameLauncher(Gtk.Application):
         self.settings_listbox.grab_focus()
 
     def activate_settings_row(self, _listbox, row):
-        self.show_setup(getattr(row, "control_system", "NES"))
+        system = getattr(row, "control_system", "NES")
+        if system == "Test Mapped Controls":
+            self.show_controller_test()
+        elif system == "Test Physical Inputs":
+            self.show_physical_test()
+        else:
+            self.show_setup(system)
+
+    def build_controller_test_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
+        page.set_margin_top(48)
+        page.set_margin_bottom(36)
+        page.set_margin_start(90)
+        page.set_margin_end(90)
+        title = Gtk.Label(label="TEST MAPPED CONTROLS", xalign=0)
+        title.add_css_class("hero")
+        subtitle = Gtk.Label(
+            label="Press a direction or button. Green labels are currently active.",
+            xalign=0,
+        )
+        subtitle.add_css_class("subtitle")
+        self.controller_test_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=18
+        )
+        self.controller_test_box.set_vexpand(True)
+        self.controller_test_empty = Gtk.Label(
+            label="No controller detected — connect a USB or Bluetooth controller."
+        )
+        self.controller_test_empty.add_css_class("game-title")
+        self.controller_test_box.append(self.controller_test_empty)
+        self.controller_test_raw = Gtk.Label(label="Waiting for input…", xalign=0)
+        self.controller_test_raw.add_css_class("status")
+        back = Gtk.Button(label="Back to Settings  [Esc]")
+        back.connect("clicked", lambda _button: self.show_settings_menu())
+        page.append(title)
+        page.append(subtitle)
+        page.append(self.controller_test_box)
+        page.append(self.controller_test_raw)
+        page.append(back)
+        return page
+
+    def show_controller_test(self):
+        self.stack.set_visible_child_name("controller_test")
+        for device in sorted(glob.glob("/dev/input/js*")):
+            self.controller_connected(device)
+
+    def build_physical_test_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        page.set_margin_top(42)
+        page.set_margin_bottom(30)
+        page.set_margin_start(70)
+        page.set_margin_end(70)
+        title = Gtk.Label(label="TEST PHYSICAL INPUTS", xalign=0)
+        title.add_css_class("hero")
+        subtitle = Gtk.Label(
+            label="Raw Linux joydev input — buttons and axes are shown without mapping.",
+            xalign=0,
+        )
+        subtitle.add_css_class("subtitle")
+        self.physical_test_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=16
+        )
+        self.physical_test_empty = Gtk.Label(
+            label="No controller detected — connect a USB or Bluetooth controller."
+        )
+        self.physical_test_empty.add_css_class("game-title")
+        self.physical_test_box.append(self.physical_test_empty)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_vexpand(True)
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_child(self.physical_test_box)
+        back = Gtk.Button(label="Back to Settings  [Esc]")
+        back.connect("clicked", lambda _button: self.show_settings_menu())
+        page.append(title)
+        page.append(subtitle)
+        page.append(scroll)
+        page.append(back)
+        return page
+
+    def show_physical_test(self):
+        self.stack.set_visible_child_name("physical_test")
+        for device in sorted(glob.glob("/dev/input/js*")):
+            self.physical_controller_connected(device)
+
+    def physical_controller_connected(self, device):
+        if device in self.physical_test_cards:
+            return False
+        if self.physical_test_empty.get_parent():
+            self.physical_test_box.remove(self.physical_test_empty)
+        player = int(Path(device).name[2:]) + 1
+        frame = Gtk.Frame(label=f"Player {player}  •  {device}")
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        content.set_margin_top(16)
+        content.set_margin_bottom(16)
+        content.set_margin_start(16)
+        content.set_margin_end(16)
+        buttons_title = Gtk.Label(label="BUTTONS", xalign=0)
+        buttons_title.add_css_class("subtitle")
+        buttons = Gtk.FlowBox()
+        buttons.set_selection_mode(Gtk.SelectionMode.NONE)
+        buttons.set_max_children_per_line(8)
+        axes_title = Gtk.Label(label="AXES", xalign=0)
+        axes_title.add_css_class("subtitle")
+        axes = Gtk.FlowBox()
+        axes.set_selection_mode(Gtk.SelectionMode.NONE)
+        axes.set_max_children_per_line(4)
+        waiting = Gtk.Label(label="Press or move any control to discover its input.", xalign=0)
+        waiting.add_css_class("status")
+        content.append(buttons_title)
+        content.append(buttons)
+        content.append(axes_title)
+        content.append(axes)
+        content.append(waiting)
+        frame.set_child(content)
+        self.physical_test_box.append(frame)
+        self.physical_test_cards[device] = {
+            "frame": frame, "buttons_box": buttons, "axes_box": axes,
+            "buttons": {}, "axes": {}, "waiting": waiting,
+        }
+        self.physical_test_values[device] = {}
+        return False
+
+    def update_physical_test_event(self, device, event_type, number, value):
+        if device not in self.physical_test_cards:
+            self.physical_controller_connected(device)
+        card = self.physical_test_cards[device]
+        card["waiting"].set_visible(False)
+        if event_type == 1:
+            label = card["buttons"].get(number)
+            if label is None:
+                label = Gtk.Label(label=f"Button {number}")
+                label.set_size_request(112, 48)
+                label.add_css_class("game-title")
+                card["buttons_box"].append(label)
+                card["buttons"][number] = label
+            if value:
+                label.add_css_class("test-active")
+                label.set_text(f"Button {number}  ●")
+            else:
+                label.remove_css_class("test-active")
+                label.set_text(f"Button {number}")
+        elif event_type == 2:
+            label = card["axes"].get(number)
+            if label is None:
+                label = Gtk.Label()
+                label.set_size_request(190, 48)
+                label.add_css_class("game-title")
+                card["axes_box"].append(label)
+                card["axes"][number] = label
+            label.set_text(f"Axis {number}: {value:+6d}")
+            if abs(value) > 16000:
+                label.add_css_class("test-active")
+            else:
+                label.remove_css_class("test-active")
+        return False
+
+    def controller_connected(self, device):
+        self.physical_controller_connected(device)
+        if device in self.controller_test_cards:
+            return False
+        if self.controller_test_empty.get_parent():
+            self.controller_test_box.remove(self.controller_test_empty)
+        player = int(Path(device).name[2:]) + 1
+        frame = Gtk.Frame(label=f"Player {player}  •  {device}")
+        grid = Gtk.Grid(column_spacing=12, row_spacing=12)
+        grid.set_margin_top(18)
+        grid.set_margin_bottom(18)
+        grid.set_margin_start(18)
+        grid.set_margin_end(18)
+        labels = {}
+        actions = (
+            ("up", "UP"), ("down", "DOWN"), ("left", "LEFT"), ("right", "RIGHT"),
+            ("a", "A"), ("b", "B"), ("turboa", "TURBO A"),
+            ("turbob", "TURBO B"), ("select", "SELECT"), ("start", "START"),
+        )
+        for index, (action, text) in enumerate(actions):
+            label = Gtk.Label(label=text)
+            label.set_size_request(130, 54)
+            label.add_css_class("game-title")
+            grid.attach(label, index % 5, index // 5, 1, 1)
+            labels[action] = label
+        frame.set_child(grid)
+        self.controller_test_box.append(frame)
+        self.controller_test_cards[device] = (frame, labels)
+        self.controller_test_state[device] = set()
+        return False
+
+    def controller_disconnected(self, device):
+        physical = self.physical_test_cards.pop(device, None)
+        self.physical_test_values.pop(device, None)
+        if physical:
+            self.physical_test_box.remove(physical["frame"])
+        if not self.physical_test_cards and not self.physical_test_empty.get_parent():
+            self.physical_test_box.append(self.physical_test_empty)
+        card = self.controller_test_cards.pop(device, None)
+        self.controller_test_state.pop(device, None)
+        if card:
+            self.controller_test_box.remove(card[0])
+        if not self.controller_test_cards and not self.controller_test_empty.get_parent():
+            self.controller_test_box.append(self.controller_test_empty)
+        return False
+
+    def handle_controller_test_event(self, device, event_type, number, value):
+        self.update_physical_test_event(device, event_type, number, value)
+        if device not in self.controller_test_cards:
+            self.controller_connected(device)
+        _frame, labels = self.controller_test_cards[device]
+        state = self.controller_test_state[device]
+        affected = set()
+        if event_type == 1:
+            action = {
+                0: "a", 1: "b", 2: "turboa", 3: "turbob",
+                6: "select", 7: "start",
+            }.get(number)
+            if action:
+                affected.add(action)
+                (state.add if value else state.discard)(action)
+            detail = f"{Path(device).name}: Button {number} {'pressed' if value else 'released'}"
+        elif event_type == 2:
+            axis_actions = {
+                0: ("left", "right"), 1: ("up", "down"),
+                6: ("left", "right"), 7: ("up", "down"),
+            }.get(number)
+            if axis_actions:
+                negative, positive = axis_actions
+                affected.update(axis_actions)
+                state.discard(negative)
+                state.discard(positive)
+                if value < -16000:
+                    state.add(negative)
+                elif value > 16000:
+                    state.add(positive)
+            detail = f"{Path(device).name}: Axis {number} = {value}"
+        else:
+            return False
+        for action in affected:
+            if action in state:
+                labels[action].add_css_class("test-active")
+            else:
+                labels[action].remove_css_class("test-active")
+        if self.stack.get_visible_child_name() == "controller_test":
+            self.controller_test_raw.set_text(detail)
+        return False
 
     def build_details_panel(self):
         panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -897,7 +1168,9 @@ class GameLauncher(Gtk.Application):
             self.capture_kind = None
             self.refresh_mapping_labels()
             return True
-        if self.stack.get_visible_child_name() == "setup":
+        if self.stack.get_visible_child_name() in (
+            "setup", "controller_test", "physical_test"
+        ):
             if keyval == Gdk.KEY_Escape:
                 self.show_settings_menu()
                 return True
