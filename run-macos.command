@@ -18,15 +18,16 @@ fi
 
 python_bin=""
 for candidate in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
-    if [[ -x "$candidate" ]] && "$candidate" -c 'import gi; gi.require_version("Gtk", "4.0")' 2>/dev/null; then
+    if [[ -x "$candidate" ]] \
+        && "$candidate" -c 'import gi, PIL; gi.require_version("Gtk", "4.0")' 2>/dev/null; then
         python_bin="$candidate"
         break
     fi
 done
 
 if [[ -z "$python_bin" ]]; then
-    echo "GTK 4 for Python is not installed."
-    echo "Install Homebrew, then run: brew install gtk4 pygobject3"
+    echo "GTK 4 and Pillow for Python are not installed."
+    echo "Install Homebrew, then run: brew install gtk4 pygobject3 pillow"
     echo "After installation, double-click this file again."
     wait_for_key
     exit 1

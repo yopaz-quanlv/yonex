@@ -62,31 +62,40 @@ def retroarch_executable(system=None, home=None):
     return _first_file((Path("/usr/bin/retroarch"), Path("/usr/local/bin/retroarch")))
 
 
-def libretro_core(system=None, home=None):
-    override = os.environ.get("NES_LIBRETRO_CORE")
+def libretro_core(system=None, home=None, console="NES"):
+    console = console.upper()
+    override = os.environ.get(f"{console}_LIBRETRO_CORE")
     if override:
         return Path(override).expanduser()
 
     system = system or platform.system()
     home = Path(home or Path.home())
+    core_names = {
+        "NES": ("nestopia_libretro", "fceumm_libretro"),
+        "GBA": ("mgba_libretro",),
+        "NDS": ("desmume_libretro", "melonds_libretro"),
+    }
+    names = core_names.get(console, ())
     if system == "Darwin":
         support = home / "Library/Application Support/RetroArch"
-        names = ("nestopia_libretro.dylib", "fceumm_libretro.dylib")
         directories = (
             support / "cores",
             Path("/Applications/RetroArch.app/Contents/Resources/cores"),
             home / "Applications/RetroArch.app/Contents/Resources/cores",
         )
-        return _first_file(directory / name for directory in directories for name in names)
+        return _first_file(
+            directory / f"{name}.dylib" for directory in directories for name in names
+        )
 
-    names = ("nestopia_libretro.so", "fceumm_libretro.so")
     directories = (
         Path("/usr/lib/x86_64-linux-gnu/libretro"),
         Path("/usr/lib/aarch64-linux-gnu/libretro"),
         Path("/usr/lib/libretro"),
         home / ".config/retroarch/cores",
     )
-    return _first_file(directory / name for directory in directories for name in names)
+    return _first_file(
+        directory / f"{name}.so" for directory in directories for name in names
+    )
 
 
 def retroarch_config(system=None, home=None):
@@ -101,20 +110,25 @@ def retroarch_config(system=None, home=None):
     return home / ".config/retroarch/retroarch.cfg"
 
 
-def platform_help(system=None):
-    if (system or platform.system()) == "Darwin":
+def platform_help(system=None, console="NES"):
+    if (system or platform.system()) == "Darwin" and console.upper() == "NES":
         return "Install FCEUX with: brew install fceux"
-    return "Install RetroArch and the Nestopia or FCEUmm libretro core"
+    return f"Install RetroArch and a {console.upper()} libretro core"
 
 
-def emulator_command(game, system=None):
+def emulator_command(game, system=None, console="NES", append_configs=(), home=None):
     system = system or platform.system()
-    if system == "Darwin":
+    console = console.upper()
+    if system == "Darwin" and console == "NES":
         executable = fceux_executable()
         return [str(executable), "--fullscreen", "1", str(game)] if executable else None
 
-    executable = retroarch_executable(system=system)
-    core = libretro_core(system=system)
+    executable = retroarch_executable(system=system, home=home)
+    core = libretro_core(system=system, home=home, console=console)
     if not executable or not core:
         return None
-    return [str(executable), "--fullscreen", "-L", str(core), str(game)]
+    command = [str(executable), "--fullscreen"]
+    if append_configs:
+        command.append(f"--appendconfig={'|'.join(map(str, append_configs))}")
+    command.extend(("-L", str(core), str(game)))
+    return command

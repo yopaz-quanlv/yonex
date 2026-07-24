@@ -33,12 +33,46 @@ class LauncherPlatformTests(unittest.TestCase):
                 home / "Library/Application Support/RetroArch/config/retroarch.cfg",
             )
 
+    def test_mac_gba_retroarch_command(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {}, clear=True
+        ):
+            home = Path(directory)
+            executable = home / "Applications/RetroArch.app/Contents/MacOS/RetroArch"
+            core = (
+                home
+                / "Library/Application Support/RetroArch/cores/mgba_libretro.dylib"
+            )
+            executable.parent.mkdir(parents=True)
+            executable.touch()
+            core.parent.mkdir(parents=True)
+            core.touch()
+
+            self.assertEqual(
+                launcher_platform.emulator_command(
+                    "game.gba",
+                    "Darwin",
+                    console="GBA",
+                    append_configs=("/tmp/controls.cfg",),
+                    home=home,
+                ),
+                [
+                    str(executable),
+                    "--fullscreen",
+                    "--appendconfig=/tmp/controls.cfg",
+                    "-L",
+                    str(core),
+                    "game.gba",
+                ],
+            )
+
     def test_environment_overrides(self):
         values = {
             "NES_GAME_DIR": "~/roms",
             "NES_FCEUX": "~/fceux",
             "NES_RETROARCH": "~/RetroArch",
             "NES_LIBRETRO_CORE": "~/nestopia.dylib",
+            "GBA_LIBRETRO_CORE": "~/mgba.dylib",
             "NES_RETROARCH_CONFIG": "~/retroarch.cfg",
         }
         with patch.dict(os.environ, values, clear=True):
@@ -49,6 +83,10 @@ class LauncherPlatformTests(unittest.TestCase):
             )
             self.assertEqual(
                 launcher_platform.libretro_core(), Path("~/nestopia.dylib").expanduser()
+            )
+            self.assertEqual(
+                launcher_platform.libretro_core(console="GBA"),
+                Path("~/mgba.dylib").expanduser(),
             )
             self.assertEqual(
                 launcher_platform.retroarch_config(), Path("~/retroarch.cfg").expanduser()

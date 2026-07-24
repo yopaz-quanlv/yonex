@@ -1,0 +1,13 @@
+[Unit]
+Description=Open Yonex launcher from MACHENIKE G3S Home button
+After=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/yonex
+ExecStart=/usr/bin/python3 %h/yonex/controller_launcher_daemon.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
