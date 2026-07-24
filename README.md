@@ -38,6 +38,30 @@ sequence. By default it only prints the generated RetroArch configuration.
 Pass `--apply` to save it under `autoconfig/udev` after reviewing the captured
 bindings.
 
+## Controller Home launcher
+
+`controller_launcher_daemon.py` watches MACHENIKE controllers and activates the
+fullscreen launcher when raw Button 8 (Home) is pressed. It deliberately ignores
+Home while RetroArch is running so the game's own menu hotkey remains available.
+
+The user service template is stored at
+`systemd/yones-controller-launcher.service`. Install and enable it with:
+
+```bash
+install -Dm644 systemd/yones-controller-launcher.service \
+  ~/.config/systemd/user/yones-controller-launcher.service
+systemctl --user daemon-reload
+systemctl --user enable --now yones-controller-launcher.service
+```
+
+Check detection and service logs with:
+
+```bash
+python3 controller_launcher_daemon.py --check
+systemctl --user status yones-controller-launcher.service
+journalctl --user -u yones-controller-launcher.service
+```
+
 ## Requirements
 
 - Python 3 with GTK 4 GObject bindings
