@@ -205,6 +205,18 @@ class GameLauncher(Gtk.Application):
                 background: #16a36a;
                 color: white;
             }
+            .controller-hotspot {
+                background: rgba(23, 27, 39, 0.76);
+                color: white;
+                border: 2px solid rgba(255, 255, 255, 0.90);
+                border-radius: 999px;
+                font-size: 13px;
+                font-weight: 900;
+            }
+            .controller-hotspot.test-active {
+                background: rgba(22, 163, 106, 0.92);
+                border-color: #8affcf;
+            }
         """)
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
@@ -654,51 +666,74 @@ class GameLauncher(Gtk.Application):
         content.set_margin_bottom(16)
         content.set_margin_start(16)
         content.set_margin_end(16)
-        layout = Gtk.Grid(column_spacing=10, row_spacing=10)
-        layout.set_column_homogeneous(True)
-        layout.add_css_class("controller-shell")
-        layout.set_hexpand(True)
+        shoulders = Gtk.Grid(column_spacing=10, row_spacing=10)
+        shoulders.set_column_homogeneous(True)
+        shoulders.set_hexpand(True)
         button_visuals = {}
 
-        def add_control(number, text, column, row, width=1, css_class="controller-button"):
+        def add_shoulder(number, text, column, width=1):
             suffix = f"\nB{number}" if number is not None else ""
             label = Gtk.Label(label=f"{text}{suffix}")
             label.set_justify(Gtk.Justification.CENTER)
             label.set_size_request(72 * width, 54)
-            label.add_css_class(css_class)
-            layout.attach(label, column, row, width, 1)
+            label.add_css_class("controller-shoulder")
+            shoulders.attach(label, column, 0, width, 1)
             if number is not None:
                 button_visuals[number] = label
             return label
 
-        left_trigger = add_control(None, "LT\nAxis 2", 0, 0, 2, "controller-shoulder")
-        add_control(4, "LB", 2, 0, 2, "controller-shoulder")
-        add_control(5, "RB", 7, 0, 2, "controller-shoulder")
-        right_trigger = add_control(None, "RT\nAxis 5", 9, 0, 2, "controller-shoulder")
+        left_trigger = add_shoulder(None, "LT\nAxis 2", 0, 2)
+        add_shoulder(4, "LB", 2, 2)
+        add_shoulder(5, "RB", 4, 2)
+        right_trigger = add_shoulder(None, "RT\nAxis 5", 6, 2)
+
+        controller_stage = Gtk.Fixed()
+        controller_stage.set_size_request(600, 600)
+        controller_stage.set_halign(Gtk.Align.CENTER)
+        controller_image = Gtk.Picture.new_for_filename(
+            str(APP_ROOT / "assets" / "controllers" / "machenike-g3s-white.png")
+        )
+        controller_image.set_size_request(600, 600)
+        controller_image.set_content_fit(Gtk.ContentFit.CONTAIN)
+        controller_stage.put(controller_image, 0, 0)
+
+        def add_hotspot(number, text, x, y, size=48):
+            suffix = f"\nB{number}" if number is not None else ""
+            label = Gtk.Label(label=f"{text}{suffix}")
+            label.set_justify(Gtk.Justification.CENTER)
+            label.set_size_request(size, size)
+            label.add_css_class("controller-hotspot")
+            controller_stage.put(label, x, y)
+            if number is not None:
+                button_visuals[number] = label
+            return label
+
         dpad = {
-            "up": add_control(None, "↑", 1, 2),
-            "left": add_control(None, "←", 0, 3),
-            "down": add_control(None, "↓", 1, 4),
-            "right": add_control(None, "→", 2, 3),
+            "up": add_hotspot(None, "↑", 122, 188, 46),
+            "left": add_hotspot(None, "←", 91, 219, 46),
+            "down": add_hotspot(None, "↓", 122, 250, 46),
+            "right": add_hotspot(None, "→", 153, 219, 46),
         }
-        add_control(6, "BACK", 4, 2, 2)
-        add_control(8, "HOME", 6, 2)
-        add_control(7, "START", 7, 2, 2)
-        add_control(11, "FN / TURBO", 5, 4, 2)
-        add_control(2, "X", 9, 2)
-        add_control(3, "Y", 8, 3)
-        add_control(0, "A", 10, 3)
-        add_control(1, "B", 9, 4)
-        add_control(9, "L3", 3, 6, 2)
-        add_control(10, "R3", 7, 6, 2)
+        add_hotspot(6, "BACK", 215, 190, 52)
+        add_hotspot(8, "HOME", 268, 180, 62)
+        add_hotspot(7, "START", 342, 190, 52)
+        add_hotspot(11, "FN", 268, 250, 50)
+        add_hotspot(3, "Y", 426, 185, 48)
+        add_hotspot(2, "X", 389, 222, 48)
+        add_hotspot(1, "B", 463, 222, 48)
+        add_hotspot(0, "A", 426, 259, 48)
         left_stick = Gtk.Label(label="LEFT STICK\nX +0  Y +0")
         left_stick.set_justify(Gtk.Justification.CENTER)
-        left_stick.add_css_class("controller-button")
-        layout.attach(left_stick, 0, 6, 3, 1)
+        left_stick.add_css_class("controller-hotspot")
+        left_stick.set_size_request(116, 116)
+        controller_stage.put(left_stick, 153, 286)
+        button_visuals[9] = left_stick
         right_stick = Gtk.Label(label="RIGHT STICK\nX +0  Y +0")
         right_stick.set_justify(Gtk.Justification.CENTER)
-        right_stick.add_css_class("controller-button")
-        layout.attach(right_stick, 9, 6, 2, 1)
+        right_stick.add_css_class("controller-hotspot")
+        right_stick.set_size_request(116, 116)
+        controller_stage.put(right_stick, 318, 286)
+        button_visuals[10] = right_stick
         buttons_title = Gtk.Label(label="BUTTONS", xalign=0)
         buttons_title.add_css_class("subtitle")
         buttons = Gtk.FlowBox()
@@ -715,7 +750,8 @@ class GameLauncher(Gtk.Application):
             xalign=0,
         )
         waiting.add_css_class("status")
-        content.append(layout)
+        content.append(shoulders)
+        content.append(controller_stage)
         content.append(buttons_title)
         content.append(buttons)
         content.append(axes_title)
@@ -1205,8 +1241,8 @@ class GameLauncher(Gtk.Application):
             'input_joypad_driver = "udev"',
             'input_libretro_device_p1 = "1"',
             'input_libretro_device_p2 = "1"',
-            'input_player1_joypad_index = "1"',
-            'input_player2_joypad_index = "2"',
+            'input_player1_joypad_index = "0"',
+            'input_player2_joypad_index = "1"',
         ))
         self.control_config_path(self.current_control_system).write_text(
             "\n".join(lines) + "\n", encoding="utf-8"
@@ -1233,8 +1269,8 @@ class GameLauncher(Gtk.Application):
                 'input_joypad_driver = "udev"',
                 'input_libretro_device_p1 = "1"',
                 'input_libretro_device_p2 = "1"',
-                'input_player1_joypad_index = "1"',
-                'input_player2_joypad_index = "2"',
+                'input_player1_joypad_index = "0"',
+                'input_player2_joypad_index = "1"',
             ))
             path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         else:
@@ -1242,13 +1278,13 @@ class GameLauncher(Gtk.Application):
             additions = []
             text = re.sub(
                 r'^input_player1_joypad_index\s*=.*$',
-                'input_player1_joypad_index = "1"',
+                'input_player1_joypad_index = "0"',
                 text,
                 flags=re.MULTILINE,
             )
             text = re.sub(
                 r'^input_player2_joypad_index\s*=.*$',
-                'input_player2_joypad_index = "2"',
+                'input_player2_joypad_index = "1"',
                 text,
                 flags=re.MULTILINE,
             )
@@ -1257,9 +1293,9 @@ class GameLauncher(Gtk.Application):
                 if not re.search(rf'^{config_key}\s*=', text, re.MULTILINE):
                     additions.append(f'{config_key} = "{RECOMMENDED_KEYS[system][action]}"')
             if not re.search(r'^input_player1_joypad_index\s*=', text, re.MULTILINE):
-                additions.append('input_player1_joypad_index = "1"')
+                additions.append('input_player1_joypad_index = "0"')
             if not re.search(r'^input_player2_joypad_index\s*=', text, re.MULTILINE):
-                additions.append('input_player2_joypad_index = "2"')
+                additions.append('input_player2_joypad_index = "1"')
             if not re.search(r'^joypad_autoconfig_dir\s*=', text, re.MULTILINE):
                 additions.append(f'joypad_autoconfig_dir = "{BUNDLED_AUTOCONFIG}"')
             if not re.search(r'^input_joypad_driver\s*=', text, re.MULTILINE):
