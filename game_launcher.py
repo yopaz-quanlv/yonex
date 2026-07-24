@@ -1203,6 +1203,8 @@ class GameLauncher(Gtk.Application):
         lines.extend((
             f'joypad_autoconfig_dir = "{BUNDLED_AUTOCONFIG}"',
             'input_joypad_driver = "udev"',
+            'input_libretro_device_p1 = "1"',
+            'input_libretro_device_p2 = "1"',
             'input_player1_joypad_index = "1"',
             'input_player2_joypad_index = "2"',
         ))
@@ -1229,6 +1231,8 @@ class GameLauncher(Gtk.Application):
             lines.extend((
                 f'joypad_autoconfig_dir = "{BUNDLED_AUTOCONFIG}"',
                 'input_joypad_driver = "udev"',
+                'input_libretro_device_p1 = "1"',
+                'input_libretro_device_p2 = "1"',
                 'input_player1_joypad_index = "1"',
                 'input_player2_joypad_index = "2"',
             ))
@@ -1260,6 +1264,11 @@ class GameLauncher(Gtk.Application):
                 additions.append(f'joypad_autoconfig_dir = "{BUNDLED_AUTOCONFIG}"')
             if not re.search(r'^input_joypad_driver\s*=', text, re.MULTILINE):
                 additions.append('input_joypad_driver = "udev"')
+            for player in (1, 2):
+                if not re.search(
+                    rf'^input_libretro_device_p{player}\s*=', text, re.MULTILINE
+                ):
+                    additions.append(f'input_libretro_device_p{player} = "1"')
             for action, (kind, value) in defaults.items():
                 config_key = GameLauncher.retroarch_config_key(action)
                 if not re.search(rf'^{config_key}_(?:btn|axis)\s*=', text, re.MULTILINE):
