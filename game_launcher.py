@@ -21,7 +21,8 @@ from gi.repository import Gdk, GLib, Gtk
 
 ROM_EXTENSIONS = {".nes"}
 PAGE_DIRECTORY = re.compile(r"^Page\s+(\d+)$", re.IGNORECASE)
-GAME_ROOT = Path(os.environ.get("NES_GAME_DIR", Path.home() / "yones" / "games"))
+APP_ROOT = Path(__file__).resolve().parent
+GAME_ROOT = Path(os.environ.get("NES_GAME_DIR", APP_ROOT / "games")).expanduser()
 GBA_ROOT = Path(os.environ.get("GBA_GAME_DIR", GAME_ROOT / "GBA"))
 DOWNLOADS = Path.home() / "Downloads"
 RETROARCH = "/usr/bin/retroarch"
@@ -83,6 +84,30 @@ RECOMMENDED_KEYS = {
             "turboa": "x", "turbob": "z", "l": "q", "r": "w",
             "save_state": "f2", "load_state": "f4"},
 }
+DEFAULT_GAMEPAD_BINDINGS = {
+    "NES": {
+        "up": ("axis", "-7"), "down": ("axis", "+7"),
+        "left": ("axis", "-6"), "right": ("axis", "+6"),
+        "select": ("btn", "6"), "start": ("btn", "7"),
+        "a": ("btn", "0"), "b": ("btn", "1"),
+        "turboa": ("btn", "2"), "turbob": ("btn", "3"),
+    },
+    "GBA": {
+        "up": ("axis", "-7"), "down": ("axis", "+7"),
+        "left": ("axis", "-6"), "right": ("axis", "+6"),
+        "select": ("btn", "6"), "start": ("btn", "7"),
+        "a": ("btn", "0"), "b": ("btn", "1"),
+        "l": ("btn", "4"), "r": ("btn", "5"),
+    },
+    "NDS": {
+        "up": ("axis", "-7"), "down": ("axis", "+7"),
+        "left": ("axis", "-6"), "right": ("axis", "+6"),
+        "select": ("btn", "6"), "start": ("btn", "7"),
+        "a": ("btn", "0"), "b": ("btn", "1"),
+        "turboa": ("btn", "2"), "turbob": ("btn", "3"),
+        "l": ("btn", "4"), "r": ("btn", "5"),
+    },
+}
 
 
 class GameLauncher(Gtk.Application):
@@ -123,13 +148,29 @@ class GameLauncher(Gtk.Application):
 
         css = Gtk.CssProvider()
         css.load_from_data(b"""
-            window { background: #090b12; color: #f7f7fb; }
+            window, label { color: #f7f7fb; }
+            window { background: #090b12; }
             .hero { font-size: 42px; font-weight: 900; color: #ffdf5d; }
             .subtitle { font-size: 16px; color: #9da6ba; }
             list { background: transparent; }
+            row, row label { color: #f7f7fb; }
             row { border-radius: 14px; margin: 5px 0; padding: 5px; }
-            row:selected { background: #5846e8; }
-            .game-title { font-size: 25px; font-weight: 700; }
+            row:hover { background: #24293a; }
+            row:selected, row:selected label {
+                background: #5846e8;
+                color: #ffffff;
+            }
+            button, button label {
+                background: #24293a;
+                color: #f7f7fb;
+            }
+            button:hover, button:hover label,
+            button:focus, button:focus label,
+            button:checked, button:checked label {
+                background: #5846e8;
+                color: #ffffff;
+            }
+            .game-title { font-size: 25px; font-weight: 700; color: #f7f7fb; }
             .game-path { font-size: 13px; color: #aeb6c8; }
             .hint { font-size: 14px; color: #aeb6c8; }
             .status { font-size: 15px; color: #6ee7b7; }
@@ -143,6 +184,7 @@ class GameLauncher(Gtk.Application):
             }
             .controller-button {
                 background: #171b27;
+                color: #f7f7fb;
                 border: 1px solid #7d879d;
                 border-radius: 22px;
                 padding: 8px;
@@ -151,6 +193,7 @@ class GameLauncher(Gtk.Application):
             }
             .controller-shoulder {
                 background: #171b27;
+                color: #f7f7fb;
                 border: 1px solid #7d879d;
                 border-radius: 10px;
                 padding: 8px 20px;
@@ -250,12 +293,37 @@ class GameLauncher(Gtk.Application):
         self.gamepad_monitor_started = True
         threading.Thread(target=self.monitor_gamepad, daemon=True).start()
 
+    @staticmethod
+    def gamepad_devices():
+        """Return joydev nodes, preferring real controllers over keyboard extras."""
+        devices = sorted(glob.glob("/dev/input/js*"))
+        preferred = []
+        controller_words = (
+            "controller", "gamepad", "joystick", "xbox", "dualshock",
+            "dualsense", "microsoft", "sony", "nintendo", "8bitdo",
+            "machenike",
+        )
+        non_controller_words = ("keyboard", "mouse", "keychron link")
+        for device in devices:
+            name_path = Path("/sys/class/input") / Path(device).name / "device" / "name"
+            try:
+                name = name_path.read_text(encoding="utf-8").strip().casefold()
+            except OSError:
+                name = ""
+            if any(word in name for word in controller_words):
+                preferred.append(device)
+            elif any(word in name for word in non_controller_words):
+                continue
+        # Keep compatibility with generic USB pads whose device name does not
+        # contain a recognizable controller word.
+        return preferred or devices
+
     def monitor_gamepad(self):
         """Hot-plug monitor for common USB/Bluetooth controllers via joydev."""
         open_devices = {}
         axis_active = {}
         while True:
-            devices = sorted(glob.glob("/dev/input/js*"))
+            devices = self.gamepad_devices()
             for device in list(open_devices):
                 if device not in devices:
                     os.close(open_devices.pop(device))
@@ -404,7 +472,11 @@ class GameLauncher(Gtk.Application):
         self.current_system = system
         self.current_page = 0
         self.library_title.set_text(f"{system} GAME LIBRARY")
-        source = GAME_ROOT if system == "NES" else DOWNLOADS
+        source = {
+            "NES": GAME_ROOT,
+            "GBA": GBA_ROOT,
+            "NDS": DOWNLOADS,
+        }[system]
         self.library_subtitle.set_text(f"Games found in {source}")
         self.refresh()
         self.stack.set_visible_child_name("games")
@@ -506,7 +578,7 @@ class GameLauncher(Gtk.Application):
 
     def show_controller_test(self):
         self.stack.set_visible_child_name("controller_test")
-        for device in sorted(glob.glob("/dev/input/js*")):
+        for device in self.gamepad_devices():
             self.controller_connected(device)
 
     def build_physical_test_page(self):
@@ -540,19 +612,24 @@ class GameLauncher(Gtk.Application):
         page.append(subtitle)
         page.append(scroll)
         page.append(back)
-        for index in range(2):
-            self.physical_controller_connected(f"/dev/input/js{index}")
+        devices = self.gamepad_devices()
+        slots = devices[:2] if devices else ["/dev/input/js1", "/dev/input/js2"]
+        for device in slots:
+            self.physical_controller_connected(device)
         return page
 
     def show_physical_test(self):
         self.stack.set_visible_child_name("physical_test")
-        for device in sorted(glob.glob("/dev/input/js*")):
+        for device in self.gamepad_devices():
             self.physical_controller_connected(device)
 
     def physical_controller_connected(self, device):
+        devices = self.gamepad_devices()
+        player = devices.index(device) + 1 if device in devices else (
+            1 if Path(device).name == "js1" else 2
+        )
         if device in self.physical_test_cards:
             card = self.physical_test_cards[device]
-            player = int(Path(device).name[2:]) + 1
             connected = Path(device).exists()
             card["frame"].set_label(
                 f"Player {player}  •  {device}" if connected
@@ -566,7 +643,6 @@ class GameLauncher(Gtk.Application):
             return False
         if self.physical_test_empty.get_parent():
             self.physical_test_box.remove(self.physical_test_empty)
-        player = int(Path(device).name[2:]) + 1
         connected = Path(device).exists()
         frame = Gtk.Frame(
             label=f"Player {player}  •  {device}" if connected
@@ -1016,7 +1092,7 @@ class GameLauncher(Gtk.Application):
             button.set_label("Press a key…")
             self.window.grab_focus()
         else:
-            devices = sorted(glob.glob("/dev/input/js*"))
+            devices = self.gamepad_devices()
             if not devices:
                 self.capture_action = None
                 self.capture_kind = None
@@ -1111,14 +1187,22 @@ class GameLauncher(Gtk.Application):
     def write_control_config(self, mapping, gamepad_mapping):
         CONTROL_DIR.mkdir(parents=True, exist_ok=True)
         lines = []
+        defaults = DEFAULT_GAMEPAD_BINDINGS[self.current_control_system]
         for action, _label in CONTROL_BUTTONS[self.current_control_system]:
             config_key = self.retroarch_config_key(action)
             lines.append(f'{config_key} = "{mapping[action]}"')
-            binding = gamepad_mapping.get(action)
+            binding = gamepad_mapping.get(action, defaults.get(action))
             if binding:
                 kind, value = binding
                 lines.append(f'{config_key}_{kind} = "{value}"')
-        lines.append('input_player1_joypad_index = "0"')
+            if action not in HOTKEY_ACTIONS and action in defaults:
+                kind, value = defaults[action]
+                player2_key = config_key.replace("input_player1_", "input_player2_", 1)
+                lines.append(f'{player2_key}_{kind} = "{value}"')
+        lines.extend((
+            'input_player1_joypad_index = "1"',
+            'input_player2_joypad_index = "2"',
+        ))
         self.control_config_path(self.current_control_system).write_text(
             "\n".join(lines) + "\n", encoding="utf-8"
         )
@@ -1126,25 +1210,58 @@ class GameLauncher(Gtk.Application):
     @staticmethod
     def ensure_control_config(system):
         path = GameLauncher.control_config_path(system)
+        defaults = DEFAULT_GAMEPAD_BINDINGS[system]
         if not path.exists():
             CONTROL_DIR.mkdir(parents=True, exist_ok=True)
             lines = []
             for action, _label in CONTROL_BUTTONS[system]:
                 config_key = GameLauncher.retroarch_config_key(action)
                 lines.append(f'{config_key} = "{RECOMMENDED_KEYS[system][action]}"')
-            lines.append('input_player1_joypad_index = "0"')
+                binding = defaults.get(action)
+                if binding:
+                    kind, value = binding
+                    lines.append(f'{config_key}_{kind} = "{value}"')
+                    player2_key = config_key.replace("input_player1_", "input_player2_", 1)
+                    lines.append(f'{player2_key}_{kind} = "{value}"')
+            lines.extend((
+                'input_player1_joypad_index = "1"',
+                'input_player2_joypad_index = "2"',
+            ))
             path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         else:
             text = path.read_text(encoding="utf-8")
             additions = []
+            text = re.sub(
+                r'^input_player1_joypad_index\s*=.*$',
+                'input_player1_joypad_index = "1"',
+                text,
+                flags=re.MULTILINE,
+            )
+            text = re.sub(
+                r'^input_player2_joypad_index\s*=.*$',
+                'input_player2_joypad_index = "2"',
+                text,
+                flags=re.MULTILINE,
+            )
             for action in HOTKEY_ACTIONS:
                 config_key = GameLauncher.retroarch_config_key(action)
                 if not re.search(rf'^{config_key}\s*=', text, re.MULTILINE):
                     additions.append(f'{config_key} = "{RECOMMENDED_KEYS[system][action]}"')
             if not re.search(r'^input_player1_joypad_index\s*=', text, re.MULTILINE):
-                additions.append('input_player1_joypad_index = "0"')
-            if additions:
-                path.write_text(text.rstrip() + "\n" + "\n".join(additions) + "\n", encoding="utf-8")
+                additions.append('input_player1_joypad_index = "1"')
+            if not re.search(r'^input_player2_joypad_index\s*=', text, re.MULTILINE):
+                additions.append('input_player2_joypad_index = "2"')
+            for action, (kind, value) in defaults.items():
+                config_key = GameLauncher.retroarch_config_key(action)
+                if not re.search(rf'^{config_key}_(?:btn|axis)\s*=', text, re.MULTILINE):
+                    additions.append(f'{config_key}_{kind} = "{value}"')
+                player2_key = config_key.replace("input_player1_", "input_player2_", 1)
+                if not re.search(rf'^{player2_key}_(?:btn|axis)\s*=', text, re.MULTILINE):
+                    additions.append(f'{player2_key}_{kind} = "{value}"')
+            path.write_text(
+                text.rstrip() + ("\n" + "\n".join(additions) if additions else "") + "\n",
+                encoding="utf-8",
+            )
         return path
 
     def set_recommended_keys(self, _button):
