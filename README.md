@@ -17,6 +17,26 @@ bundled gameplay artwork and metadata, and launches games through RetroArch.
 - Two-player mapped control test and raw physical button/axis test screens
 - Configurable Save State and Load State controls (F2/F4 by default)
 - Fullscreen RetroArch launching
+- Guided raw controller mapping with RetroArch autoconfig output
+
+## Guided controller mapper
+
+List detected controllers:
+
+```bash
+python3 controller_mapper.py --list
+```
+
+Run the guided test for one controller:
+
+```bash
+python3 controller_mapper.py --device /dev/input/js1
+```
+
+The mapper asks for every physical button, direction, stick, and trigger in
+sequence. By default it only prints the generated RetroArch configuration.
+Pass `--apply` to save it under `autoconfig/udev` after reviewing the captured
+bindings.
 
 ## Requirements
 
