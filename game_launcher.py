@@ -407,7 +407,7 @@ class GameLauncher(Gtk.Application):
             elif screen == "games":
                 row = self.listbox.get_selected_row()
                 if row and hasattr(row, "game_path"):
-                    self.launch_game(row.game_path)
+                    self.launch_row(self.listbox, row)
             return False
         if action == "back":
             if screen == "games" or screen == "settings_menu":
