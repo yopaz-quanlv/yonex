@@ -24,6 +24,7 @@ PAGE_DIRECTORY = re.compile(r"^Page\s+(\d+)$", re.IGNORECASE)
 APP_ROOT = Path(__file__).resolve().parent
 GAME_ROOT = Path(os.environ.get("NES_GAME_DIR", APP_ROOT / "games")).expanduser()
 GBA_ROOT = Path(os.environ.get("GBA_GAME_DIR", GAME_ROOT / "GBA"))
+BUNDLED_AUTOCONFIG = APP_ROOT / "autoconfig"
 DOWNLOADS = Path.home() / "Downloads"
 RETROARCH = "/usr/bin/retroarch"
 NES_CORE = "/usr/lib/x86_64-linux-gnu/libretro/nestopia_libretro.so"
@@ -1200,6 +1201,8 @@ class GameLauncher(Gtk.Application):
                 player2_key = config_key.replace("input_player1_", "input_player2_", 1)
                 lines.append(f'{player2_key}_{kind} = "{value}"')
         lines.extend((
+            f'joypad_autoconfig_dir = "{BUNDLED_AUTOCONFIG}"',
+            'input_joypad_driver = "udev"',
             'input_player1_joypad_index = "1"',
             'input_player2_joypad_index = "2"',
         ))
@@ -1224,6 +1227,8 @@ class GameLauncher(Gtk.Application):
                     player2_key = config_key.replace("input_player1_", "input_player2_", 1)
                     lines.append(f'{player2_key}_{kind} = "{value}"')
             lines.extend((
+                f'joypad_autoconfig_dir = "{BUNDLED_AUTOCONFIG}"',
+                'input_joypad_driver = "udev"',
                 'input_player1_joypad_index = "1"',
                 'input_player2_joypad_index = "2"',
             ))
@@ -1251,6 +1256,10 @@ class GameLauncher(Gtk.Application):
                 additions.append('input_player1_joypad_index = "1"')
             if not re.search(r'^input_player2_joypad_index\s*=', text, re.MULTILINE):
                 additions.append('input_player2_joypad_index = "2"')
+            if not re.search(r'^joypad_autoconfig_dir\s*=', text, re.MULTILINE):
+                additions.append(f'joypad_autoconfig_dir = "{BUNDLED_AUTOCONFIG}"')
+            if not re.search(r'^input_joypad_driver\s*=', text, re.MULTILINE):
+                additions.append('input_joypad_driver = "udev"')
             for action, (kind, value) in defaults.items():
                 config_key = GameLauncher.retroarch_config_key(action)
                 if not re.search(rf'^{config_key}_(?:btn|axis)\s*=', text, re.MULTILINE):
