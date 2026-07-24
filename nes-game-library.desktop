@@ -2,7 +2,8 @@
 Type=Application
 Name=NES Game Library
 Comment=Full-screen NES game launcher
-Exec=/home/quanlv/.local/bin/nes-game-library
+Exec=/usr/bin/python3 /home/yopazvn/yonex/game_launcher.py
+Path=/home/yopazvn/yonex
 Icon=applications-games
 Terminal=false
 Categories=Game;Emulator;
